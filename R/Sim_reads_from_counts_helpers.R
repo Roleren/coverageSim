@@ -410,6 +410,7 @@ append_rnase_to_dt <- function(dt_range, lengths, rnase_bias) {
 #' @param v numeric, default 1. For cosine shapes, scales the first
 #' order cosine by the power of 'v'
 #' @return a quote object to be evaluated inside the coverage function
+#' @export
 shapes <- function(i = 3, Z = 0.1, v = 1) {
   if (i == 0) {
     res <- NULL

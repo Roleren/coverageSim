@@ -1,3 +1,19 @@
+#' @export
+truth_table <- function(predicted, true) {
+  stopifnot(length(predicted) == length(true))
+  predicted <- as.logical(predicted)
+  true <- as.logical(true)
+  tb <- data.table(TP = predicted & true, FP = predicted & !true,
+                   FN = !predicted & true, TN = !predicted & !true)
+  message("Table (counts):")
+  print(colSums(tb))
+  message("Table (%):")
+  print(round((colSums(tb) / sum(colSums(tb))) * 100, 1))
+
+  return(tb)
+}
+
+#' @export
 mcc <- function(TP, FP, TN, FN, convert_negative_to_zero = FALSE) {
   # Convert types to double for better precision
   TP <- as.double(TP)
@@ -16,6 +32,7 @@ mcc <- function(TP, FP, TN, FN, convert_negative_to_zero = FALSE) {
   }
 }
 
+#' @export
 meltTruthTableGroup <- function(dt, col = "codons", grp_cols = c("simulation", "classifier"), cutoff = Inf) {
   dt_temp <- dt[, .(TP = sum(TP), FP = sum(FP), FN = sum(FN), TN = sum(TN), size = .N),
                 by = .(simulation, classifier, get(col))]; setnames(dt_temp, "get", col)

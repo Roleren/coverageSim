@@ -13,6 +13,8 @@
 #' Must contain at least 2 out of 5 named assays: gene, leaders, cds, trailer, uorf
 #' @param out_dir directory to save simulated read files, name of individual files decided by naming columns
 #' @param exp_name name of ORFik experiment to be created for these read files and annotation
+#' @param exp_save_dir path, default ORFik::config()["exp"]. Set to tempdir()
+#' or other location to not clutter your real experiments.
 #' @param transcripts character vector, default \code{names(count_table)}, default uses all transcripts,
 #' alternativly a subset of genes to assign reads to.
 #' @param ideal_coverage list, default: list(leader =  list(CAGE = quote(c(1, rep.int(0, x -1)))),
@@ -48,8 +50,10 @@
 #'  (start codon) can be differentiated by setting seq = "#" and stop codon
 #'  as seq = "*". Gives ability to scale these two important regions seperatly
 #'  from other codons.
-#' @param true_uorf_ranges = "AUTO". Can also be
-#' @param uorf_prop_within_gene = "uniform"
+#' @param true_uorf_ranges = "AUTO". Load from uorf string in 'simGenome'.
+#' @param uorf_prop_within_gene = "uniform". How should counts for uORF be
+#' distributed. Alternatives: 'length' (length biased), or user specified
+#' list of numeric values for all ORFs.
 #' @param validate logical, TRUE, check that experiment was correctly made.
 #' Set to false if you know it won't and you will fix it later. This happens
 #' if you want to put a new sample with different parameters,
@@ -75,12 +79,13 @@ simNGScoverage <- function(simGenome,
                              simCountTables(loadRegion(simGenome["txdb"], "cds"))),
                            out_dir = file.path(dirname(simGenome["genome"]), ""),
                            exp_name = "simulated_data",
+                           exp_save_dir = ORFik::config()["exp"],
                            transcripts = names(count_table),
                            ideal_coverage = list(leader =  list(CAGE = quote(c(1, rep.int(0, x -1)))),
                                             cds =          list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))),
                                             trailer =      list(PAS = quote(c(rep.int(0, x -1), 1))),
                                             uorf =         list(RFP = quote(rep.int(c(1, 0, 0), length.out = x)))),
-                           rnase_bias = list(RFP = c(0.5,1,2,10,2,1,0.5), RNA = rnase_models(),
+                           rnase_bias = list(RFP = c(0.5,2,1,10,2,1,0.5), RNA = rnase_models(),
                                              CAGE = rnase_models(), PAS = rnase_models()),
                            auto_correlation = list(cds = list(RFP = shapes(9)),
                                                    uorf =list(RFP = shapes(9))),
@@ -152,7 +157,7 @@ simNGScoverage <- function(simGenome,
   replicates <- as.character(colData(count_table)$replicate)
   conditions <- as.character(colData(count_table)$condition)
   create.experiment(out_dir, exp_name, txdb = simGenome["txdb"],
-                    fa = simGenome["genome"],
+                    fa = simGenome["genome"], saveDir = exp_save_dir,
                     organism = "Homo sapiens", author = "Simulated by ORFikSim",
                     libtype = libtypes,
                     condition = conditions,
@@ -247,21 +252,6 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
     } else dt_region <- data.table::data.table()
     return(dt_region)
   }))
-}
-
-
-truth_table <- function(predicted, true) {
-  stopifnot(length(predicted) == length(true))
-  predicted <- as.logical(predicted)
-  true <- as.logical(true)
-  tb <- data.table(TP = predicted & true, FP = predicted & !true,
-                   FN = !predicted & true, TN = !predicted & !true)
-  message("Table (counts):")
-  print(colSums(tb))
-  message("Table (%):")
-  print(round((colSums(tb) / sum(colSums(tb))) * 100, 1))
-
-  return(tb)
 }
 
 # Some ideas for CIGAR I did not create

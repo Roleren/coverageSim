@@ -175,6 +175,7 @@ simCountTablesRegions <- function(count_table = simCountTables(),
 
   assay <- assay(count_table)
   colnames <- colnames(assay)
+  rownames <- rownames(assay)
   libtypes <- as.character(colData(count_table)$libtype)
   stopifnot(all(libtypes %in% names(sampling)))
   mat <- matrix(nrow = nrow(assay), ncol = 0)
@@ -193,8 +194,9 @@ simCountTablesRegions <- function(count_table = simCountTables(),
 
   }
   split_mat <- lapply(regionsToSample, function(region) {
-    mat_region <- mat[, colnames(mat) == region]
+    mat_region <- as.matrix(mat[, colnames(mat) == region])
     colnames(mat_region) <- colnames
+    rownames(mat_region) <- rownames
     mat_region
   })
   assays(count_table) <- c(assays(count_table), split_mat)

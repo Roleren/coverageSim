@@ -27,5 +27,6 @@ Imports:
   IRanges,
   htmlwidgets,
   knitr,
+  RiboCrypt,
   rlang
 RoxygenNote: 7.2.1
