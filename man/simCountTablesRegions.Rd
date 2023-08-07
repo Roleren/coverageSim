@@ -15,7 +15,20 @@ simCountTablesRegions(
 )
 }
 \arguments{
-\item{count_table}{a}
+\item{count_table}{simCountTables()}
+
+\item{regionsToSample}{character vector of regions to sample, default:
+c("leader", "cds", "trailer", "uorf")}
+
+\item{region_proportion}{named list of mean proportions of sampling per region, default:
+\code{list(leader =  list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0),
+cds =     list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0),
+trailer = list(RFP = 0.1, RNA = 0.3, CAGE = 0, PAS = 1),
+uorf =    list(RFP = 0.1, RNA = 0,   CAGE = 0, PAS = 0))}}
+
+\item{sampling}{named list of sampling modes per library type, default:
+c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"), where MN is multinomial, alternative is
+DMN (Dirichlet-multinomial)}
 }
 \value{
 a rangedSummarizedExperiment

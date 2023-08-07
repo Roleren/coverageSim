@@ -6,6 +6,16 @@
 \usage{
 overlap_props(gene, uORFs, merged_gr)
 }
+\arguments{
+\item{gene}{character name of gene}
+
+\item{uORFs}{GRangesList of uORF genomic coordinates}
+
+\item{merged_gr}{the coverage track as GRanges}
+}
+\value{
+a list of length 2: data.table of gene tiling coverage and sum coverage.
+}
 \description{
 Find proportion used of uORFs vs gene regions
 }

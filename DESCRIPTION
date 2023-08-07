@@ -17,16 +17,23 @@ Depends:
   ORFik (>= 1.13.12),
   data.table
 Imports:
+  AnnotationDbi,
   BiocGenerics,
   BiocParallel,
   Biostrings,
+  DESeq2,
+  extraDistr,
   GenomeInfoDb,
   GenomicFeatures,
   GenomicRanges,
   ggplot2,
+  gridExtra,
   IRanges,
   htmlwidgets,
   knitr,
   RiboCrypt,
-  rlang
+  Rsamtools,
+  rtracklayer,
+  rlang,
+  stringr
 RoxygenNote: 7.2.1

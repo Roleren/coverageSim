@@ -31,6 +31,9 @@
 #' @param export_txdb logical, default TRUE. Export TxDb object of gtf. Highly adviced,
 #' but for testing you can turn it of to speed up raw output.
 #' @param uorf_max_length = 60
+#' @param debug_on logical, default TRUE. Activate debug on suspected error. This can happen
+#' on uORF sampling, with corner case created transcripts. Useful to debug to understand why it failed.
+#' If you are not interested and you believe settings are valid, just rerun until it works.
 #' @import Biostrings ORFik data.table
 #' @return a named character vector with paths to output files.
 #' genome (fasta), transcriptome (gtf), transcript Database (TxDb) and uorfs (rds)

@@ -21,6 +21,8 @@
 #' @param interceptSD numeric, default 2 (log2 value). The standard deviation for the anchoring distribution.
 #' The higher it is, the more variance counts of the genes can have. Sane values: Between 1-3
 #' @param m number of total samples, \code{m = length(libtypes) * length(conditions) * replicates}
+#' @param plot_PCA logical, default TRUE. Plot PCA plot.
+#' @param print_statistics logical, default TRUE, print count statistics.
 #' @references https://genomebiology.biomedcentral.com/articles/10.1186/s13059-014-0550-8
 #' @return a ranged summarized experiment object
 #' @export
@@ -138,11 +140,17 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
 
 #' Info about params:\cr
 #' - dispMeanRel: see DESeq2, section: Estimation of dispersions
-#' @param count_table a
-#' @param count_table a
-#' @param count_table a
-#' @param count_table a
-#' @param count_table a
+#' @param count_table simCountTables()
+#' @param regionsToSample character vector of regions to sample, default:
+#' c("leader", "cds", "trailer", "uorf")
+#' @param region_proportion named list of mean proportions of sampling per region, default:
+#' \code{list(leader =  list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0),
+#' cds =     list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0),
+#' trailer = list(RFP = 0.1, RNA = 0.3, CAGE = 0, PAS = 1),
+#' uorf =    list(RFP = 0.1, RNA = 0,   CAGE = 0, PAS = 0))}
+#' @param sampling named list of sampling modes per library type, default:
+#' c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"), where MN is multinomial, alternative is
+#' DMN (Dirichlet-multinomial)
 #' @return a rangedSummarizedExperiment
 #' @export
 #' @examples

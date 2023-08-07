@@ -1,16 +1,6 @@
-#' Plot transcript coordinates window
-#' @export
-ORF_frame_plot_window <- function(tx_window, sim_reads, uORFs,
-                                  cds_region = startRegion(cds_RPL, upstream = 0, downstream = 100),
-                                  cov_real = coveragePerTiling(tx_window, merged_gr, is.sorted = T, as.data.table = T, withFrames = T, fraction = "Real"),
-                                  cov_sim = coveragePerTiling(tx_window, sim_reads, is.sorted = T, as.data.table = T, withFrames = T, fraction = "Sim"),
-                                  break_string = "    ", y_breaks = 50, prop = c(5, 2), x_lab = "Position") {
-  if (!requireNamespace("RiboCrypt", quietly = TRUE))
-    stop("Package RiboCrypt is not installed, which is required for plotting:
-         devtools::install_github('m-swirski/RiboCrypt')")
-  cov_combined <- rbindlist(list(cov_real, cov_sim))
-  cov_combined[, frame := factor(frame)]
-  cov_plot <- ggplot(cov_combined, aes(y = count, x = position, fill = frame)) +
+coverage_plot <- function(cov, y_breaks, plot.margin) {
+  if ("frame" %in% colnames(cov)) cov[, frame := factor(frame)]
+  cov_plot <- ggplot(cov, aes(y = count, x = position, fill = frame)) +
     geom_col() + ylab("Coverage") +
     scale_y_continuous(breaks=y_breaks) +
     facet_wrap(~ fraction, ncol = 1, strip.position = "right") +
@@ -18,23 +8,42 @@ ORF_frame_plot_window <- function(tx_window, sim_reads, uORFs,
                             axis.title.x=element_blank(),
                             axis.text.x=element_blank(),
                             axis.ticks.x=element_blank(),
-                            plot.margin = margin(0, 0, 0, 0, "cm")); cov_plot
+                            plot.margin = plot.margin)
+  return(cov_plot)
+}
 
-  display_genes <- c(uORFs, cds_region); names(display_genes) <- c(paste0("U", seq(length(uORFs))), "CDS")
+#' Plot transcript coordinates window
+#' @export
+ORF_frame_plot_window <- function(tx_window, sim_reads, uORFs,
+                                  cds_region = startRegion(cds_RPL, upstream = 0, downstream = 100),
+                                  cov_real = coveragePerTiling(tx_window, merged_gr, is.sorted = T, as.data.table = T, withFrames = T, fraction = "Real"),
+                                  cov_sim = coveragePerTiling(tx_window, sim_reads, is.sorted = T, as.data.table = T, withFrames = T, fraction = "Sim"),
+                                  break_string = "    ", y_breaks = 50, prop = c(5, 2), x_lab = "Position",
+                                  plot.margin = margin(0, 0, 0, 0, "cm")) {
+  if (!requireNamespace("RiboCrypt", quietly = TRUE))
+    stop("Package RiboCrypt is not installed, which is required for plotting:
+         devtools::install_github('m-swirski/RiboCrypt')")
+  # Coverage plot
+  cov_combined <- rbindlist(list(cov_real, cov_sim))
+  cov_plot <- coverage_plot(cov_combined, y_breaks, plot.margin)
+  # ORF panel
+  display_genes <- c(uORFs, cds_region)
+  names(display_genes) <- c(paste0("U", seq(length(uORFs))), "CDS")
   ORF_Panel_data <- gene_model_panel(display_range = tx_window, display_genes,
                                 custom_regions = NULL, viewMode = "any")[[1]]
-  ORF_Panel <- RiboCrypt:::geneModelPanelPlot(ORF_Panel_data)
+  ORF_Panel <- geneModelPanelPlot(ORF_Panel_data)
   ORF_Panel <- ORF_Panel +
     ylab("") +
     xlab(x_lab) +
     xlim(0, widthPerGroup(tx_window, F)) +
     scale_y_continuous(labels = function(breaks) {rlang::rep_along(breaks, break_string)}) +
-    theme_classic() +
     facet_wrap(~ "", ncol = 1, strip.position = "right") +
+    theme_classic() +
     theme(strip.text.y = element_text(),
           strip.background = element_blank(),
-          plot.margin = margin(0, 0, 0, 0, "cm"),
+          plot.margin = plot.margin,
           axis.ticks.y=element_blank(), axis.line.y =element_blank())
+  # Merge the two (2 rows)
   plot <- gridExtra::arrangeGrob(cov_plot, ORF_Panel,
                                  layout_matrix = t(matrix(c(rep(1, prop[1]), rep(2, prop[2])), ncol = sum(prop))),
                                  padding = unit(0.0, "line"))
@@ -101,4 +110,26 @@ gene_model_panel <- function (display_range, annotation, frame = 1, custom_regio
     lines_locations <- NULL
   }
   return(list(result_dt, lines_locations))
+}
+
+#' From RiboCrypt
+geneModelPanelPlot <- function(dt, frame = 1, text_size = 2) {
+  base_gg <- ggplot(frame = frame) + ylab("") + xlab("") +
+    theme(axis.title.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.x = element_blank(), axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(), plot.margin = unit(c(0,
+                                                               0, 0, 0), "pt")) + scale_x_continuous(expand = c(0,
+                                                                                                                0)) + scale_y_continuous(expand = c(0, 0)) + theme(panel.background = element_rect(fill = "white"))
+  if (nrow(dt) > 0) {
+    suppressWarnings({
+      result_plot <- base_gg + geom_rect(data = dt, mapping = aes(ymin = 0 -
+                                                                    layers, ymax = 1 - layers, xmin = rect_starts,
+                                                                  xmax = rect_ends), fill = dt$cols, alpha = 0.5) +
+        geom_text(data = dt, mapping = aes(y = 0.5 -
+                                             layers, x = labels_locations, label = gene_names),
+                  color = "black", hjust = dt$hjusts, size = text_size)
+    })
+  }
+  else result_plot <- base_gg
+  return(result_plot)
 }

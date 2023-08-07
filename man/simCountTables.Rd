@@ -49,6 +49,10 @@ The higher it is, the more variance counts of the genes can have. Sane values: B
 \code{2^trueIntercept}}
 
 \item{sizeFactors}{multiplicative factors for each sample}
+
+\item{plot_PCA}{logical, default TRUE. Plot PCA plot.}
+
+\item{print_statistics}{logical, default TRUE, print count statistics.}
 }
 \value{
 a ranged summarized experiment object

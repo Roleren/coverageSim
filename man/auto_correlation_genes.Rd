@@ -29,8 +29,9 @@ auto_correlation_genes(
 \item{fun}{which auto correlation function, default stats::acf}
 
 \item{mean}{logical, default FALSE Else get only mean acf per position.}
-
-\item{return}{a data.table of counts}
+}
+\value{
+a data.table of counts
 }
 \description{
 Get gene auto correlation

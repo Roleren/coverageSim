@@ -71,6 +71,10 @@ only used any cds_exons > 1. Is the size excluding the '5 GT motif.}
 
 \item{export_txdb}{logical, default TRUE. Export TxDb object of gtf. Highly adviced,
 but for testing you can turn it of to speed up raw output.}
+
+\item{debug_on}{logical, default TRUE. Activate debug on suspected error. This can happen
+on uORF sampling, with corner case created transcripts. Useful to debug to understand why it failed.
+If you are not interested and you believe settings are valid, just rerun until it works.}
 }
 \value{
 a named character vector with paths to output files.

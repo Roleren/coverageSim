@@ -10,12 +10,13 @@ simNGScoverage(
     "cds"))),
   out_dir = file.path(dirname(simGenome["genome"]), ""),
   exp_name = "simulated_data",
+  exp_save_dir = ORFik::config()["exp"],
   transcripts = names(count_table),
   ideal_coverage = list(leader = list(CAGE = quote(c(1, rep.int(0, x - 1)))), cds =
     list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))), trailer = list(PAS =
     quote(c(rep.int(0, x - 1), 1))), uorf = list(RFP = quote(rep.int(c(1, 0, 0),
     length.out = x)))),
-  rnase_bias = list(RFP = c(0.5, 1, 2, 10, 2, 1, 0.5), RNA = rnase_models(), CAGE =
+  rnase_bias = list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = rnase_models(), CAGE =
     rnase_models(), PAS = rnase_models()),
   auto_correlation = list(cds = list(RFP = shapes(9)), uorf = list(RFP = shapes(9))),
   read_lengths_per = list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1),
@@ -40,6 +41,9 @@ Must contain at least 2 out of 5 named assays: gene, leaders, cds, trailer, uorf
 \item{out_dir}{directory to save simulated read files, name of individual files decided by naming columns}
 
 \item{exp_name}{name of ORFik experiment to be created for these read files and annotation}
+
+\item{exp_save_dir}{path, default ORFik::config()["exp"]. Set to tempdir()
+or other location to not clutter your real experiments.}
 
 \item{transcripts}{character vector, default \code{names(count_table)}, default uses all transcripts,
 alternativly a subset of genes to assign reads to.}
@@ -74,9 +78,23 @@ uorf =   list(RFP = "DMN"))}
 list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"). Alternatives:
 Non at the moment.}
 
-\item{true_uorf_ranges}{= "AUTO". Can also be}
+\item{seq_bias}{the sequence bias used for simulation, default:
+load_seq_bias(), the Ribosome profiling estimates from Amino acid dwell times from
+P-site shifted reads from library "R2" from the coverageSim paper. Specifically it is:
+a data.table with correctly named columns:
+ "seq", "alpha"\cr
+ the column seq (Amino acid, 1 letter per)
+ or by codons (3 letter per), and a mean column and dispersion, with relative usage.
+ In addition iMethionin
+ (start codon) can be differentiated by setting seq = "#" and stop codon
+ as seq = "*". Gives ability to scale these two important regions seperatly
+ from other codons.}
 
-\item{uorf_prop_within_gene}{= "uniform"}
+\item{true_uorf_ranges}{= "AUTO". Load from uorf string in 'simGenome'.}
+
+\item{uorf_prop_within_gene}{= "uniform". How should counts for uORF be
+distributed. Alternatives: 'length' (length biased), or user specified
+list of numeric values for all ORFs.}
 
 \item{validate}{logical, TRUE, check that experiment was correctly made.
 Set to false if you know it won't and you will fix it later. This happens
@@ -85,18 +103,8 @@ in a folder with other libraries you made
 earlier, so then only validate when you create the ORFik experiment after the
 last sample is made.}
 
-\item{pow_cov}{= 15}
-
-\item{regionsToSample}{= c("leader", "cds", "trailer", "uorf")}
-
-\item{tAI}{a data.table, must have  correctly named columns:
-"seq", "alpha"\cr
-the column seq (Amino acid, 1 letter per)
-or by codons (3 letter per), and a mean column and dispersion, with relative usage.
-In addition iMethionin
-(start codon) can be differentiated by setting seq = "#" and stop codon
-as seq = "*". Gives ability to scale these two important regions seperatly
-from other codons.}
+\item{debug_coverage}{logical, default FALSE. If TRUE, debug steps of coverage calculation,
+for parameter errors or just to understand how it all works.}
 }
 \value{
 an \code{\link[ORFik]{experiment}}
@@ -115,6 +123,5 @@ gene_count_table <-simCountTables(loadRegion(simGenome6["txdb"], "cds"),
  libtypes = "RFP", print_statistics = FALSE)
 region_count_table <- simCountTablesRegions(gene_count_table,
                  regionsToSample = c("leader", "cds", "trailer"))
-debug(simNGScoverage)
 simNGScoverage(simGenome6, region_count_table)
 }

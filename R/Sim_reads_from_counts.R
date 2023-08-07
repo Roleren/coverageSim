@@ -31,7 +31,6 @@
 #'    uorf = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1))
 #'    - Alternative: abs(cos(x)) + abs(cos(x*b[i])),
 #'     where b is an internal value sampled per gene in interval 3 to 15.
-#' @param pow_cov = 15
 #' @param read_lengths_per a list, default: list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1)
 #' @param sampling a list, default: list(leader = list(RFP = "MN", RNA = "MN"),
 #' cds =    list(RFP = "DMN"),
@@ -41,8 +40,11 @@
 #' @param libFormats The output formats, a named list of characters:
 #'  list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"). Alternatives:
 #'  Non at the moment.
-#' @param regionsToSample = c("leader", "cds", "trailer", "uorf")
-#' @param tAI a data.table, must have  correctly named columns:
+#' @param true_uorf_ranges = "AUTO". Load from uorf string in 'simGenome'.
+#' @param seq_bias the sequence bias used for simulation, default:
+#' load_seq_bias(), the Ribosome profiling estimates from Amino acid dwell times from
+#' P-site shifted reads from library "R2" from the coverageSim paper. Specifically it is:
+#' a data.table with correctly named columns:
 #'  "seq", "alpha"\cr
 #'  the column seq (Amino acid, 1 letter per)
 #'  or by codons (3 letter per), and a mean column and dispersion, with relative usage.
@@ -50,7 +52,6 @@
 #'  (start codon) can be differentiated by setting seq = "#" and stop codon
 #'  as seq = "*". Gives ability to scale these two important regions seperatly
 #'  from other codons.
-#' @param true_uorf_ranges = "AUTO". Load from uorf string in 'simGenome'.
 #' @param uorf_prop_within_gene = "uniform". How should counts for uORF be
 #' distributed. Alternatives: 'length' (length biased), or user specified
 #' list of numeric values for all ORFs.
@@ -60,6 +61,8 @@
 #' in a folder with other libraries you made
 #' earlier, so then only validate when you create the ORFik experiment after the
 #' last sample is made.
+#' @param debug_coverage logical, default FALSE. If TRUE, debug steps of coverage calculation,
+#' for parameter errors or just to understand how it all works.
 #' @return an \code{\link[ORFik]{experiment}}
 #' @import ORFik data.table GenomicRanges
 #' @export
@@ -72,7 +75,6 @@
 #'  libtypes = "RFP", print_statistics = FALSE)
 #' region_count_table <- simCountTablesRegions(gene_count_table,
 #'                  regionsToSample = c("leader", "cds", "trailer"))
-#' debug(simNGScoverage)
 #' simNGScoverage(simGenome6, region_count_table)
 simNGScoverage <- function(simGenome,
                            count_table = simCountTablesRegions(

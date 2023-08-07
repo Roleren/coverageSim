@@ -14,19 +14,22 @@ autocor_window(
 )
 }
 \arguments{
-\item{vec}{""}
+\item{vec}{vector of coverage}
 
-\item{max.lag}{""}
+\item{max.lag}{integer, the max lag for correlation window}
 
-\item{fill}{"}
+\item{fill}{NA}
 
-\item{na.rm}{"}
+\item{na.rm}{logical, FALSE}
 
 \item{padding.rm}{logical or integer, if integer, keep this amount
 of padding.}
 
 \item{penalty}{1.5, for auto correlation window, the power scaler for
 penalty. Higher value, lower correlation far away.}
+}
+\value{
+the input vector with applied rolling function
 }
 \description{
 Auto correlation

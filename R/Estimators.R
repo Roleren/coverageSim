@@ -199,7 +199,11 @@ AA_score <- function(grl, reads, seqs, weight = "score", is.sorted = TRUE,
 }
 
 #' Find proportion used of uORFs vs gene regions
+#' @param gene character name of gene
+#' @param uORFs GRangesList of uORF genomic coordinates
+#' @param merged_gr the coverage track as GRanges
 #' @export
+#' @return a list of length 2: data.table of gene tiling coverage and sum coverage.
 overlap_props <- function(gene, uORFs, merged_gr) {
   mrna <- loadRegion(df, "mrna", names.keep = gene)
   count_mRNA <- countOverlapsW(mrna, merged_gr, "score")
@@ -349,7 +353,7 @@ auto_correlation_fast <- function(dt, dist = 6, by.codon = TRUE, codon.vs.nt = F
 #' @param genes numeric vector, genes, index of which gene this is from
 #' @param fun which auto correlation function, default stats::acf
 #' @param mean logical, default FALSE Else get only mean acf per position.
-#' @param return a data.table of counts
+#' @return a data.table of counts
 #' @export
 auto_correlation_genes <- function(dt, dist = 6, by.codon = TRUE, codon.vs.nt = FALSE,
                                    genes, fun = acf, mean = FALSE) {
@@ -383,14 +387,15 @@ auto_correlation_genes_all <- function(dt_all_list_named, dist = 100, by.codon =
 }
 
 #' Auto correlation
-#' @param vec ""
-#' @param max.lag ""
-#' @param fill "
-#' @param na.rm "
+#' @param vec vector of coverage
+#' @param max.lag integer, the max lag for correlation window
+#' @param fill NA
+#' @param na.rm logical, FALSE
 #' @param padding.rm logical or integer, if integer, keep this amount
 #' of padding.
 #' @param penalty 1.5, for auto correlation window, the power scaler for
 #' penalty. Higher value, lower correlation far away.
+#' @return the input vector with applied rolling function
 autocor_window <- function(vec, max.lag, fill = NA, na.rm = FALSE,
                            padding.rm = FALSE, penalty = 1.5) {
   window <- max.lag*2 + 1
