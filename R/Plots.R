@@ -13,6 +13,18 @@ coverage_plot <- function(cov, y_breaks, plot.margin) {
 }
 
 #' Plot transcript coordinates window
+#' @param tx_window a GRangesList of window
+#' @param sim_reads GRanges of reads
+#' @param uORFs GRangesList of uORFs
+#' @param cds_region GRangesList of cds window
+#' @param cov_real data.table of real coverage
+#' @param cov_sim data.table of simulated coverage
+#' @param break_string spacing x axis, default: "    "
+#' @param y_breaks 50
+#' @param prop c(5, 2)
+#' @param x_lab ggplot x label, default: "Position"
+#' @param plot.margin margin(0, 0, 0, 0, "cm")
+#' @return a ggplot object
 #' @export
 ORF_frame_plot_window <- function(tx_window, sim_reads, uORFs,
                                   cds_region = startRegion(cds_RPL, upstream = 0, downstream = 100),
@@ -51,6 +63,12 @@ ORF_frame_plot_window <- function(tx_window, sim_reads, uORFs,
 }
 
 #' From RiboCrypt
+#' @param display_range GRanges object
+#' @param annotation GRangesList of annotation
+#' @param frame numeric, default 1
+#' @param custom_regions custom annotation, i.e. uORFs etc
+#' @param viewMode character, "tx" for transcript view, "genomic" for genomic view
+#' @return list of length 2, data.table of boxes and numeric vector of line locations
 gene_model_panel <- function (display_range, annotation, frame = 1, custom_regions,
                               viewMode) {
   if (!is.null(custom_regions)) {
@@ -113,6 +131,10 @@ gene_model_panel <- function (display_range, annotation, frame = 1, custom_regio
 }
 
 #' From RiboCrypt
+#' @param dt a data.table
+#' @param frame integer, default 1
+#' @param text_size integer, default 2.
+#' @return a ggplot object
 geneModelPanelPlot <- function(dt, frame = 1, text_size = 2) {
   base_gg <- ggplot(frame = frame) + ylab("") + xlab("") +
     theme(axis.title.x = element_blank(), axis.ticks.x = element_blank(),

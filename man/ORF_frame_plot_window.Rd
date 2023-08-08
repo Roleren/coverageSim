@@ -20,6 +20,32 @@ ORF_frame_plot_window(
   plot.margin = margin(0, 0, 0, 0, "cm")
 )
 }
+\arguments{
+\item{tx_window}{a GRangesList of window}
+
+\item{sim_reads}{GRanges of reads}
+
+\item{uORFs}{GRangesList of uORFs}
+
+\item{cds_region}{GRangesList of cds window}
+
+\item{cov_real}{data.table of real coverage}
+
+\item{cov_sim}{data.table of simulated coverage}
+
+\item{break_string}{spacing x axis, default: "    "}
+
+\item{y_breaks}{50}
+
+\item{prop}{c(5, 2)}
+
+\item{x_lab}{ggplot x label, default: "Position"}
+
+\item{plot.margin}{margin(0, 0, 0, 0, "cm")}
+}
+\value{
+a ggplot object
+}
 \description{
 Plot transcript coordinates window
 }

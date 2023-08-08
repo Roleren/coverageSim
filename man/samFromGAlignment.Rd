@@ -21,7 +21,26 @@ samFromGAlignment(
 \arguments{
 \item{x}{A GRanges or GAlignment object}
 
+\item{path}{character path to save sam/bam file}
+
 \item{seqinfo}{a Seqinfo object, default GenomeInfoDb::seqinfo(x)}
+
+\item{MAPQ}{numeric, full read quality score, default 30.}
+
+\item{sequences}{character, default "*", empty, this saves space if not needed.}
+
+\item{per_base_quality}{character, per base quality score, default "*"}
+
+\item{RNEXT}{character, default "*", see bam format manual if relevant}
+
+\item{PNEXT}{numeric, default 0, see bam format manual if relevant}
+
+\item{TLEN}{numeric, default 0, see bam format information if relevant}
+
+\item{FLAGS}{numeric flags, default is vector of ifelse(strandBool(x), 0, 16),
+giving +/- strand flag.}
+
+\item{make_bam}{logical, default TRUE}
 }
 \value{
 a named character vector of path to SAM and BAM (if bam was created)

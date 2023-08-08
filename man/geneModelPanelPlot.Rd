@@ -6,6 +6,16 @@
 \usage{
 geneModelPanelPlot(dt, frame = 1, text_size = 2)
 }
+\arguments{
+\item{dt}{a data.table}
+
+\item{frame}{integer, default 1}
+
+\item{text_size}{integer, default 2.}
+}
+\value{
+a ggplot object
+}
 \description{
 From RiboCrypt
 }

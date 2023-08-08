@@ -5,8 +5,8 @@
 
 ## How to install
 ```r
-library(devtools)
-install_github("Roleren/coverageSim")
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("Roleren/coverageSim")
 ```
 
 ## Simple example

@@ -13,6 +13,18 @@ truth_table <- function(predicted, true) {
   return(tb)
 }
 
+#' Matthews correlation coefficient
+#'
+#' Also called Phi coefficient. In machine learning,
+#' it is used as a measure of the quality of binary (two-class) classifications,
+#' containing information on all four types of TP, FP, TN and FN
+#' @param TP numeric/double, number of True Positives.
+#' @param FP numeric/double, number of False Positives.
+#' @param TN numeric/double, number of True Negatives.
+#' @param FN numeric/double, number of False Negatives.
+#' @param convert_negative_to_zero logical, default FALSE. Set to True, if
+#' negative information is not relevant.
+#' @return a double vector of mcc values.
 #' @export
 mcc <- function(TP, FP, TN, FN, convert_negative_to_zero = FALSE) {
   # Convert types to double for better precision

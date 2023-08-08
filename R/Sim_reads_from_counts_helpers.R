@@ -1,6 +1,16 @@
 #' Convert GAlignment to sam/bam
 #' @param x A GRanges or GAlignment object
+#' @param path character path to save sam/bam file
 #' @param seqinfo a Seqinfo object, default GenomeInfoDb::seqinfo(x)
+#' @param MAPQ numeric, full read quality score, default 30.
+#' @param sequences character, default "*", empty, this saves space if not needed.
+#' @param per_base_quality character, per base quality score, default "*"
+#' @param RNEXT character, default "*", see bam format manual if relevant
+#' @param PNEXT numeric, default 0, see bam format manual if relevant
+#' @param TLEN numeric, default 0, see bam format information if relevant
+#' @param FLAGS numeric flags, default is vector of ifelse(strandBool(x), 0, 16),
+#' giving +/- strand flag.
+#' @param make_bam logical, default TRUE
 #' @return a named character vector of path to SAM and BAM (if bam was created)
 samFromGAlignment <- function(x, path, seqinfo = GenomeInfoDb::seqinfo(x),
                               MAPQ = 30, sequences = "*", per_base_quality = "*",

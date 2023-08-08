@@ -12,6 +12,20 @@ gene_model_panel(
   viewMode
 )
 }
+\arguments{
+\item{display_range}{GRanges object}
+
+\item{annotation}{GRangesList of annotation}
+
+\item{frame}{numeric, default 1}
+
+\item{custom_regions}{custom annotation, i.e. uORFs etc}
+
+\item{viewMode}{character, "tx" for transcript view, "genomic" for genomic view}
+}
+\value{
+list of length 2, data.table of boxes and numeric vector of line locations
+}
 \description{
 From RiboCrypt
 }
