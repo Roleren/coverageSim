@@ -27,13 +27,52 @@ genome_output_test_controller <- function() {
     cds_internal_stops <-  alphabetFrequency(cds_AA)[,"*"]
     if (any(cds_internal_stops != 1) & debug_on){
       warning("malformed CDS created, corner case, rerun to avoid this")
-      browser()
+      if (interactive()) browser()
       print(sum(cds_internal_stops != 1))
       print(cds_AA[cds_internal_stops != 1])
     }
     cds_starts <-  alphabetFrequency(translate(chromosome_seqs[startCodons(cds_grl, TRUE)]))[,"M"]
     stopifnot(all(cds_starts == 1))
   })
+}
+
+replace_letters_by_width_group <- function(x, positions, letter = "C") {
+  widths <- width(x)
+  if (!length(widths)) {
+    return(x)
+  }
+
+  result <- x
+  width_groups <- split(seq_along(widths), widths)
+  for (group_indices in width_groups) {
+    group_positions <- positions[group_indices]
+    replace_counts <- lengths(group_positions)
+    if (!any(replace_counts > 0L)) {
+      next
+    }
+
+    replace_matrix <- matrix(
+      FALSE,
+      nrow = length(group_indices),
+      ncol = widths[group_indices[1]]
+    )
+    replace_matrix[cbind(
+      rep.int(seq_along(group_indices), replace_counts),
+      unlist(group_positions, use.names = FALSE)
+    )] <- TRUE
+    replacement_letters <- Biostrings::DNAStringSet(vapply(
+      replace_counts,
+      function(n) paste(rep.int(letter, n), collapse = ""),
+      character(1)
+    ))
+    result[group_indices] <- Biostrings::replaceLetterAt(
+      x[group_indices],
+      at = replace_matrix,
+      letter = replacement_letters
+    )
+  }
+
+  result
 }
 
 genome_exon_ranges_controller <- function() {
@@ -167,7 +206,7 @@ export_genome_output_controller <- function() {
     rtracklayer::export.gff(con = out_gtf, gtf_ranges)
     simGenome <- c(genome = out_fasta, gtf = out_gtf)
     if (export_txdb) {
-      txdb <- GenomicFeatures::makeTxDbFromGFF(out_gtf,
+      txdb <- txdbmaker::makeTxDbFromGFF(out_gtf,
                                                chrominfo = seqinfo(findFa(out_fasta)),
                                                organism = "Homo sapiens")
       AnnotationDbi::saveDb(txdb, out_txdb)
@@ -411,9 +450,7 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
   new_cds_string <- chromosome_seqs[cds_grl]
   internal_inframe_stops <- 3 + (start(Biostrings::vmatchPattern("*", heads(translate(new_cds_string), -1))) - 1)*3
   if(!all(lengths(internal_inframe_stops) == 0)) {
-    stops_matrix <- as.matrix(IntegerList(lapply(seq(n), function(x) seq.int(width(new_cds_string[x])))) %in% internal_inframe_stops)
-    temp <- Biostrings::replaceLetterAt(new_cds_string, stops_matrix,
-                                        letter = unlist(DNAStringSetList(lapply(rowSums(stops_matrix), function(x) paste(rep("C", x), collapse = "")))))
+    temp <- replace_letters_by_width_group(new_cds_string, internal_inframe_stops)
     a <- cds_grl; names(a) <- NULL
     b <- temp; b[!strandBool(a)] <- reverseComplement(b[!strandBool(a)])
     matching <- chmatch(names(chromosome_seqs), seqnamesPerGroup(a, FALSE))
@@ -488,7 +525,7 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
   if (start_debug) {
     all <- which(total_stops != 1)
     i <- all[1]
-    browser()
+    if (interactive()) browser()
     print(table(total_stops))
     print(translate(chromosome_seqs[uorf_ranges[i]]))
     print(chromosome_seqs[uorf_ranges[i]])
@@ -563,13 +600,7 @@ create_uorf_seq_template <- function(uorf_ranges, uorf_groupings,
                            sep = "", collapse = "")))
   ))
   internal_inframe_stops <- 1 + (start(Biostrings::vmatchPattern("*", translate(temp_all))) - 1)*3
-  for (i in seq_along(uorf_groupings)) {
-    stops <- internal_inframe_stops[[i]]
-    if (length(stops) > 0) {
-      temp_all[[i]] <- Biostrings::replaceLetterAt(temp_all[[i]], stops,
-                                                   letter = rep("C", length(stops)))
-    }
-  }
+  temp_all <- replace_letters_by_width_group(temp_all, internal_inframe_stops)
   temp_all <- DNAStringSet(paste0(temp_all, sample(stop_codons, length(temp_all), replace = TRUE)))
   temp_all[strand[uorf_groupings] == "-"] <- reverseComplement(temp_all[strand[uorf_groupings] == "-"])
   names(temp_all) <- seqnames[uorf_groupings]
@@ -579,19 +610,27 @@ create_uorf_seq_template <- function(uorf_ranges, uorf_groupings,
 distribute_reads_to_uORFs <- function(region_counts, assay, uorf_ranges, uorf_prop_mode,
                                       uorf_prop_within_gene) {
   if (is.null(names(region_counts))) names(region_counts) <- rownames(assay)
-  uorf_tab <- table(txNames(uorf_ranges))
+  uorf_tx_names <- txNames(uorf_ranges)
 
   prob <- if (uorf_prop_mode == "character") {
     if (uorf_prop_within_gene == "uniform") {
       a <- rep(1, length(uorf_ranges))
-      names(a) <- txNames(uorf_ranges)
+      names(a) <- uorf_tx_names
     } else {
       stop("Not implemented yet")
-      lapply(names(uorf_tab), function(x) rmultinom(1, region_counts[x], rep(1, uorf_tab[x])))
+      lapply(unique(uorf_tx_names), function(x) rmultinom(1, region_counts[x], rep(1, sum(uorf_tx_names == x))))
     }
     a
   } else uorf_prop_within_gene
-  a <-  lapply(names(uorf_tab), function(x) rmultinom(1, region_counts[x], prob[names(prob) == x]))
-  a <- unlist(a); names(a) <- txNames(uorf_ranges)
-  return(a)
+  allocated_counts <- numeric(length(uorf_tx_names))
+  unique_tx_names <- unique(uorf_tx_names)
+  for (tx_name in unique_tx_names) {
+    tx_indices <- which(uorf_tx_names == tx_name)
+    tx_count <- as.numeric(region_counts[as.character(tx_name)])
+    allocated_counts[tx_indices] <- as.vector(
+      rmultinom(1, tx_count, prob[tx_indices])
+    )
+  }
+  names(allocated_counts) <- uorf_tx_names
+  allocated_counts
 }
