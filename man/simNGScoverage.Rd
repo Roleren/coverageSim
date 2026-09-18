@@ -13,15 +13,16 @@ simNGScoverage(
   exp_save_dir = ORFik::config()["exp"],
   transcripts = names(count_table),
   ideal_coverage = list(leader = list(CAGE = quote(c(1, rep.int(0, x - 1)))), cds =
-    list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))), trailer = list(PAS =
-    quote(c(rep.int(0, x - 1), 1))), uorf = list(RFP = quote(rep.int(c(1, 0, 0),
-    length.out = x)))),
+    list(RFP = quote(rep(c(1, 0, 0), length.out = x))), trailer = list(PAS =
+    quote(c(rep.int(0, x - 1), 1))), uorf = list(RFP = quote(rep(c(1, 0, 0), length.out =
+    x)))),
   rnase_bias = list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = rnase_models(), CAGE =
     rnase_models(), PAS = rnase_models()),
   auto_correlation = list(cds = list(RFP = shapes(9)), uorf = list(RFP = shapes(9))),
   read_lengths_per = list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1),
   sampling = list(leader = list(RFP = "MN", RNA = "MN"), cds = list(RFP = "DMN"), trailer
     = list(RFP = "MN"), uorf = list(RFP = "DMN")),
+  dmn_alpha_scale = NULL,
   libClasses = list(RFP = "GRanges", RNA = "GAlignment", CAGE = "GRanges", PAS =
     "GRanges"),
   libFormats = list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"),
@@ -29,6 +30,13 @@ simNGScoverage(
   true_uorf_ranges = "AUTO",
   uorf_prop_within_gene = "uniform",
   validate = TRUE,
+  fragment_mode = c("simulated_rpf", "legacy_point", "physical"),
+  fragment_geometry = list(source = "default", site_reference = "a_site", distribution =
+    NULL, boundary_action = "renormalize", five_prime_bias = list(source = "none"),
+    three_prime_bias = list(source = "none"), codon_bias = list(source = "none"),
+    frame_bias = list(source = "none")),
+  technical_artifacts = NULL,
+  ground_truth = FALSE,
   debug_coverage = FALSE
 )
 }
@@ -63,7 +71,9 @@ cds = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE 
 trailer = list(RFP = 1, RNA = 1, CAGE = 1, PAS = 1),
 uorf = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1))
 - Alternative: abs(cos(x)) + abs(cos(x*b[i])),
- where b is an internal value sampled per gene in interval 3 to 15.}
+ where b is an internal value sampled per gene in interval 3 to 15.
+A numeric odd-length kernel can also be supplied, including the learned
+kernel returned by \code{learn_end_bias()$auto_correlation}.}
 
 \item{read_lengths_per}{a list, default: list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1)}
 
@@ -72,6 +82,15 @@ cds =    list(RFP = "DMN"),
 trailer =list(RFP = "MN"),
 uorf =   list(RFP = "DMN"))}
 
+\item{dmn_alpha_scale}{NULL or a positive numeric scalar. NULL (default) uses
+a unique dmn_alpha_scale stored in seq_bias, as produced by learn_end_bias(),
+and otherwise falls back to 1. The value multiplies the final Step-4
+Dirichlet alpha vector immediately before sampling. Values below 1 increase
+position-to-position variation, producing more isolated peaks and zeros;
+values above 1 make coverage smoother. Relative expected coverage and the
+total read count per transcript region remain unchanged. This parameter
+affects only regions using \code{sampling = "DMN"}.}
+
 \item{libClasses}{= list(RFP = "GRanges", RNA = "GAlignment", CAGE = "GRanges", PAS = "GRanges")}
 
 \item{libFormats}{The output formats, a named list of characters:
@@ -79,8 +98,8 @@ list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"). Alternatives:
 "sam" and "bam".}
 
 \item{seq_bias}{the sequence bias used for simulation, default:
-load_seq_bias(), the Ribosome profiling estimates from Amino acid dwell times from
-P-site shifted reads from library "R2" from the coverageSim paper. Specifically it is:
+load_seq_bias(), the motif-wise median of the amino-acid alpha estimates from
+P-site shifted reads in libraries R1--R10 from the coverageSim paper. Specifically it is:
 a data.table with correctly named columns:
  "seq", "alpha"\cr
  the column seq (Amino acid, 1 letter per)
@@ -88,7 +107,9 @@ a data.table with correctly named columns:
  In addition iMethionin
  (start codon) can be differentiated by setting seq = "#" and stop codon
  as seq = "*". Gives ability to scale these two important regions seperatly
- from other codons.}
+ from other codons.
+ If a \code{variable} column is present, it must identify exactly one profile.
+ Tables returned by \code{load_seq_bias(bias = "all")} must be subset first.}
 
 \item{true_uorf_ranges}{= "AUTO". Load from uorf string in 'simGenome'.}
 
@@ -102,6 +123,40 @@ if you want to put a new sample with different parameters,
 in a folder with other libraries you made
 earlier, so then only validate when you create the ORFik experiment after the
 last sample is made.}
+
+\item{fragment_mode}{RFP representation. `"simulated_rpf"` (default) creates
+complete simulated transcript-derived RPFs; `"legacy_point"` preserves the
+historical behavior where the simulated signal position is the read start.
+The former name `"physical"` remains as a deprecated compatibility alias.}
+
+\item{fragment_geometry}{Named list controlling simulated RPFs. Supports
+`source` (`"default"`, `"user"`, or `"learned"`), `site_reference`
+(`"p_site"` or `"a_site"`), a joint `distribution` with fragment_length,
+site_offset, and probability columns, and `boundary_action`. The default
+`"renormalize"` conditions probabilities on valid boundary geometry and
+preserves counts; `"error"` rejects impossible geometry.
+End-bias sources may also be `"user"` or `"learned"` with a table of
+`kmer`, `weight`, and optionally `fragment_length`; use
+\code{make_synthetic_end_bias()} to create a simple explicit profile.
+Each end accepts `strength` (default 1): 0 disables it, 0.5 weakens it,
+and values above 1 strengthen it using weight^strength. Active end biases
+jointly weight sites and fragment geometry before the final read draw,
+preserving each transcript/region read budget and the input site support.
+Length-specific `codon_bias` and `frame_bias` fields use the same source and
+strength convention; their tables contain codon/frame, fragment_length and
+weight columns. They act during physical-fragment selection and can be
+learned with `learn_end_bias(by_length = TRUE)`.}
+
+\item{ground_truth}{FALSE, TRUE, or a directory path. In simulated-RPF mode, TRUE
+writes one compressed fragment truth table next to each simulated library.}
+
+\item{technical_artifacts}{Optional list controlling alignment artifacts in
+simulated RPF SAM/BAM output: duplication_rate and multimapping_rate default
+to zero; duplicate_copies and secondary_alignments default to one. Active
+artifacts require RFP output format sam or bam. Extra PCR copies carry flag
+0x400; alternate alignments share the primary QNAME and carry flag 0x100 and
+an NH tag greater than one. Biological fragment counts remain in the regular
+ground truth; the expanded artifact truth is written separately.}
 
 \item{debug_coverage}{logical, default FALSE. If TRUE, debug steps of coverage calculation,
 for parameter errors or just to understand how it all works.}

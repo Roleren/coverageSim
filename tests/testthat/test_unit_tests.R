@@ -1,15 +1,87 @@
 test_that("load_seq_bias returns the default AA p-site bias table", {
   dt <- load_seq_bias()
   expect_s3_class(dt, "data.table")
-  expect_equal(unique(dt$variable), "R2")
+  expect_equal(unique(dt$variable), "median")
   expect_true(all(c("seqs", "alpha") %in% colnames(dt)))
+})
+
+test_that("DMN alpha scaling changes variance but preserves expected coverage", {
+  alpha <- replicate(4000L, c(2, 6), simplify = FALSE)
+  low <- do.call(rbind, scale_dmn_alpha(alpha, 0.25))
+  high <- do.call(rbind, scale_dmn_alpha(alpha, 4))
+
+  expect_equal(low[1, ] / sum(low[1, ]), c(0.25, 0.75))
+  expect_equal(high[1, ] / sum(high[1, ]), c(0.25, 0.75))
+
+  set.seed(2026)
+  low_counts <- extraDistr::rdirmnom(4000L, 1000L, low)
+  set.seed(2026)
+  high_counts <- extraDistr::rdirmnom(4000L, 1000L, high)
+  low_fraction <- low_counts[, 1] / rowSums(low_counts)
+  high_fraction <- high_counts[, 1] / rowSums(high_counts)
+
+  expect_equal(mean(low_fraction), 0.25, tolerance = 0.015)
+  expect_equal(mean(high_fraction), 0.25, tolerance = 0.015)
+  expect_gt(stats::var(low_fraction), 5 * stats::var(high_fraction))
+  expect_equal(rowSums(low_counts), rep(1000, 4000L))
+  expect_equal(rowSums(high_counts), rep(1000, 4000L))
+  for (invalid in list(0, -1, NA_real_, Inf, c(1, 2), "1")) {
+    expect_error(scale_dmn_alpha(alpha[1], invalid), "dmn_alpha_scale")
+  }
+})
+
+test_that("DMN moment estimator recovers a known concentration", {
+  set.seed(20260919)
+  sites <- 60L
+  reads <- 1200L
+  true_scale <- 0.4
+  alpha <- rep(3 * true_scale, sites)
+  counts <- extraDistr::rdirmnom(400L, reads, alpha)
+  estimates <- vapply(seq_len(nrow(counts)), function(i) {
+    dmn_alpha_moment(
+      counts[i, ], expected = rep(reads / sites, sites),
+      nt_positions = 3L * sites
+    )$dmn_alpha_scale
+  }, numeric(1))
+
+  expect_equal(stats::median(estimates), true_scale, tolerance = 0.08)
+  expect_true(all(estimates > 0))
+})
+
+test_that("DMN alpha defaults to one and learned profiles override it", {
+  profile <- data.table::data.table(
+    variable = "learned", seqs = c("AAA", "CCC"), alpha = c(1, 2),
+    dmn_alpha_scale = 0.025
+  )
+  expect_equal(resolve_dmn_alpha_scale(NULL, NULL), 1)
+  expect_equal(resolve_dmn_alpha_scale(NULL, profile), 0.025)
+  expect_equal(resolve_dmn_alpha_scale(2, profile), 2)
+  profile[2, dmn_alpha_scale := 0.05]
+  expect_error(resolve_dmn_alpha_scale(NULL, profile), "multiple")
+})
+
+test_that("numeric autocorrelation kernels smooth locally and validate input", {
+  signal <- c(0, 0, 9, 0, 0)
+  smoothed <- apply_autocorrelation_kernel(signal, c(1, 2, 1))
+  expect_equal(smoothed, c(0, 2.25, 4.5, 2.25, 0))
+  expect_equal(apply_autocorrelation_kernel(signal, 1), signal)
+  expect_error(apply_autocorrelation_kernel(signal, c(1, 1)), "odd")
+  expect_error(apply_autocorrelation_kernel(signal, c(1, -1, 1)), "non-negative")
 })
 
 test_that("load_seq_bias supports alternate built-in bias tables", {
   aa_stop <- load_seq_bias(bias = "stop_codon")
+  codon_start <- load_seq_bias(
+    type = "codon", shift = "a-site", bias = "start_codon"
+  )
+  codon_similar <- load_seq_bias(
+    type = "codon", shift = "a-site", bias = "similar"
+  )
   codon_all <- load_seq_bias(type = "codon", shift = "a-site", bias = "all")
 
   expect_equal(unique(aa_stop$variable), "R1")
+  expect_equal(unique(codon_start$variable), "R2")
+  expect_equal(unique(codon_similar$variable), "R10")
   expect_true(length(unique(codon_all$variable)) > 1)
 })
 
@@ -82,6 +154,17 @@ test_that("replace_letters_by_width_group matches per-sequence replacement on mi
   actual <- replace_letters_by_width_group(sequences, positions)
 
   expect_equal(as.character(actual), as.character(expected))
+})
+
+test_that("uorf debug warnings explain how to avoid interactive debug mode", {
+  expect_warning(
+    uorf_debug_warning("Some uORFs have internal stop codons that could not be fixed!"),
+    regexp = "set debug_on = FALSE"
+  )
+  expect_warning(
+    uorf_debug_warning("Some uORFs have no stop codon."),
+    regexp = "longer leaders, fewer uORFs, or disabled overlaps"
+  )
 })
 
 test_that("distribute_reads_to_uORFs preserves uorf_ranges order when expanding transcript counts", {

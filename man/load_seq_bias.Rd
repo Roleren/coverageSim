@@ -8,7 +8,7 @@ load_seq_bias(
   type = "AA",
   shift = "p-site",
   dir = system.file(package = "coverageSim", "extdata"),
-  bias = "start_codon"
+  bias = "median"
 )
 }
 \arguments{
@@ -20,8 +20,12 @@ codon}
 \item{dir}{Directory with sequence biases, default is internal path
 predefined estimators: system.file(package = "coverageSim", "extdata")}
 
-\item{bias}{character, default: "start_codon". Alternative: "stop_codon",
-"similar" (uniform like), or "all" (to load all).}
+\item{bias}{The default, \code{"median"}, calculates the motif-wise median
+of the alpha values in libraries R1--R10. Alternatively, use one profile
+name (e.g. "R2"), one of the aliases "start_codon" (R2), "stop_codon"
+(R1), and "similar" (R10), or \code{"all"} to load every profile for
+inspection. Select one profile before passing a table loaded with
+\code{bias = "all"} to \code{simNGScoverage()}.}
 }
 \value{
 a data.table of bias per sequence motif

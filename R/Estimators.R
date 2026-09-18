@@ -114,9 +114,12 @@ translate_orf_seq <- function(cds, faFile, is.sorted = TRUE,
 
   if (as == "codon"){
     #subseq(seqs[lt2], width(seqs[lt2]) - 2, width(seqs[lt2])) <- "***"
-    seqs <- stringr::str_sub(string = seqs,
-                             start = seq(1, nchar(seqs)-2, by = 3),
-                             end = seq(3, nchar(seqs), by = 3))
+    seqs <- lapply(seqs, function(seq) {
+      stringr::str_sub(string = seq,
+                       start = seq(1, nchar(seq) - 2, by = 3),
+                       end = seq(3, nchar(seq), by = 3))
+    })
+    if (!return.as.list) seqs <- unlist(seqs, use.names = FALSE)
   }
   if (return.as.list && as == "AA") {
     seqs <- unlist(strsplit(seqs, split = ""))
@@ -408,9 +411,10 @@ autocor_window <- function(vec, max.lag, fill = NA, na.rm = FALSE,
   split_2_low <- floor(window/2)
   roll_function <- c(seq(split_2 , 2), 1, seq(2, split_2))^penalty
   padding_left <- padding_right <- rep(0, split_2_low*2)
-  roll <- frollapply(c(padding_left, vec, padding_right),
-                     FUN = function(x) mean(x/roll_function, na.rm =T),
-                     N = window, align = "center", fill = NA)
+  roll <- frollapply_compat(c(padding_left, vec, padding_right),
+                            window = window,
+                            FUN = function(x) mean(x/roll_function, na.rm =T),
+                            align = "center", fill = NA)
   if (padding.rm) {
     padd_to_keep <- ifelse(padding.rm > 1, padding.rm, 0)
     left_pad_index <-  seq_along(padding_left - padd_to_keep)
