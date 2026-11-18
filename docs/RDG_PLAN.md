@@ -82,8 +82,26 @@ Profile first (Codex report pending), then replace hot R loops with C++ (Rcpp) w
 complex architectures in roughly the time of the current no-uORF run. Results must stay identical to the R version
 (seeded tests comparing both).
 
+## 5b. Measured (Codex review, commit 8e284eb, 2026-11-18)
+
+- Tests: 1,510 pass, 0 fail, 10 skip (21 min). BAM output valid; positions/strands/CIGARs/sequences match the ground
+  truth exactly incl. 68 splice-junction and 857 minus-strand records; 1 vs 4 cores byte-identical.
+- Time: 500 genes 90 s (1 core) / 73 s (4); 3,000 genes 225 s / 177 s. Genome creation dominates: 127 s of 225 s at
+  3,000 genes, of which `create_uORFs` 97 s (38 s in `[[<-` whole-chromosome copies, 16 s `create_uorf_ranges`).
+  Coverage step 76 s (1 core). So the constructive builder (build transcripts, concatenate once) is the first speed
+  win; C++ only where coverage profiling still shows R loops after that.
+- Bugs to fix first, each with a test:
+  1. High: `simCountTablesRegions(regionsToSample = subset)` samples all default regions and keeps only the subset,
+     so reads are silently lost (3,000 -> 2,682 in the README example). Renormalise to the selected regions or record
+     the omitted reads.
+  2. Medium: a genome with `max_uorfs = 0` plus the default region table fails (`true_uORFs.rds` read unconditionally).
+  3. Medium: region sets without CDS fail (`cds_ranges` used unconditionally in simNGScoverage).
+- Also: `browser()` calls in package code (Sim_genome_helpers.R, debug paths) must go; a database finalizer warning
+  appears intermittently in tests (origin unknown).
+
 ## 6. Order of work (branch feature/rdg-architecture)
 
+0. Fix the three bugs above (tests first).
 1. Architecture spec + feasibility check + log (no sequence change yet), with tests for impossible cases.
 2. Constructive builder + verifier + decoy annotation; tests that every requested feature exists exactly, on both
    strands and with introns.
