@@ -763,39 +763,46 @@ fragment_candidates <- function(signal_table, transcript_models, candidates,
 # receive its reads; they are left out and listed in the "dropped_reads"
 # attribute of the result.
 allocate_fragment_candidates <- function(candidates, signal_table, joint) {
-  groups <- if (joint) fragment_sampling_groups(signal_table) else {
-    seq_len(nrow(signal_table))
-  }
+  # `labels` is the ground-truth region of each position (e.g. "uorf:3");
+  # `groups` decides what is drawn together. They differ when drawing per
+  # position: the draw then uses the row, but every fragment must still carry
+  # its region label, or reads cannot be attributed to their feature.
+  labels <- fragment_sampling_groups(signal_table)
+  groups <- if (joint) labels else seq_len(nrow(signal_table))
   # The read budget of each group, from all of its positions.
-  budgets <- data.table::data.table(sampling_group = groups,
+  budgets <- data.table::data.table(draw_group = groups,
+                                    sampling_group = labels,
                                     transcript_id = signal_table$transcript_id)
   if ("read_count" %in% names(signal_table)) {
     budgets[, read_count := signal_table$read_count]
-    budgets <- budgets[, .(transcript_id = transcript_id[1],
+    budgets <- budgets[, .(sampling_group = sampling_group[1],
+                           transcript_id = transcript_id[1],
                            total = if (data.table::uniqueN(read_count) == 1L) {
                              read_count[1]
-                           } else NA_real_), by = sampling_group]
+                           } else NA_real_), by = draw_group]
   } else {
     budgets[, score := signal_table$score]
-    budgets <- budgets[, .(transcript_id = transcript_id[1],
-                           total = round(sum(score))), by = sampling_group]
+    budgets <- budgets[, .(sampling_group = sampling_group[1],
+                           transcript_id = transcript_id[1],
+                           total = round(sum(score))), by = draw_group]
   }
   if (anyNA(budgets$total) || any(budgets$total < 0) ||
       any(budgets$total != floor(budgets$total))) {
     stop("Invalid fragment sampling budget")
   }
-  dropped <- budgets[total > 0 & !sampling_group %in% groups[candidates$signal_row],
-                     .(sampling_group = as.character(sampling_group),
-                       transcript_id = as.character(transcript_id),
-                       reads = as.numeric(total))]
+  dropped <- budgets[total > 0 & !draw_group %in% groups[candidates$signal_row],
+                     .(reads = as.numeric(sum(total))),
+                     by = .(sampling_group = as.character(sampling_group),
+                            transcript_id = as.character(transcript_id))]
 
-  candidates[, sampling_group := groups[signal_row]]
+  candidates[, draw_group := groups[signal_row]]
+  candidates[, sampling_group := labels[signal_row]]
   candidates[, probability := geometry_probability * bias_weight *
                signal_table$score[signal_row]]
   if (any(!is.finite(candidates$probability))) {
     stop("End-bias strength produces non-finite weights; reduce strength")
   }
-  candidates[, budget := budgets$total[match(sampling_group, budgets$sampling_group)]]
+  candidates[, budget := budgets$total[match(draw_group, budgets$draw_group)]]
   # No signal positions at all: there is nothing to draw, and the table stays
   # empty instead of reaching the draw with no budget.
   if (!nrow(candidates)) {
@@ -807,9 +814,10 @@ allocate_fragment_candidates <- function(candidates, signal_table, joint) {
       probability <- probability / max(probability)
       p <- probability / sum(probability)
       list(p, as.integer(stats::rmultinom(1L, budget[1], p)))
-    }, by = sampling_group]
+    }, by = draw_group]
     candidates[, budget := NULL]
   }
+  candidates[, draw_group := NULL]
   data.table::setattr(candidates, "dropped_reads", dropped)
   candidates
 }

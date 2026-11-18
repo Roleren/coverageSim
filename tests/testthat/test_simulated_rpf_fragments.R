@@ -331,6 +331,32 @@ test_that("reads stay in their region and are left out where no position has roo
   )
 })
 
+test_that("every fragment keeps its region label, with and without end bias", {
+  # Regression: without an active end bias, reads are drawn per position, and
+  # sampling_group used to come back as that position's row index ("1", "2")
+  # instead of its region ("cds:1"), so reads could not be traced to a feature.
+  fixture <- make_fragment_fixture()
+  signals <- make_fragment_signals()[c(1, 1, 1)]
+  # All three positions have room for a whole fragment, so no read is dropped.
+  signals[, `:=`(signal_position = c(202L, 203L, 205L), score = c(30L, 20L, 10L),
+                 sampling_group = c("cds:1", "cds:1", "uorf:2"))]
+  signals[, `:=`(start = signal_position, end = signal_position)]
+  plain <- list(source = "user", site_offset = 9:12, boundary_action = "renormalize")
+  with_end_bias <- c(plain, list(five_prime_bias = list(
+    source = "user", table = data.table::data.table(kmer = c("A", "C", "G", "T"),
+                                                    weight = c(2, 1, 1, 1))
+  )))
+
+  for (geometry in list(plain, with_end_bias)) {
+    fragments <- make_simulated_rpf_fragments(signals, fixture$models, 14L, geometry)
+    expect_equal(sum(attr(fragments, "dropped_reads")$reads), 0)
+    expect_setequal(unique(fragments$sampling_group), c("cds:1", "uorf:2"))
+    per_group <- fragments[, .(reads = sum(score)), by = sampling_group]
+    expect_equal(per_group[sampling_group == "cds:1", reads], 50L)
+    expect_equal(per_group[sampling_group == "uorf:2", reads], 10L)
+  }
+})
+
 test_that("a per-position read_count is what moves when there is no room", {
   fixture <- make_fragment_fixture()
   signals <- make_fragment_signals()[c(1, 1)]

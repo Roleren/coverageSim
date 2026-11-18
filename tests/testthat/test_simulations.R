@@ -208,6 +208,40 @@ test_that("multiple transcripts on one chromosome retain counts through BAM expo
   expect_gt(data.table::uniqueN(truth$transcript_id), 1L)
 })
 
+test_that("ground truth attributes every read to its region, matching the region counts", {
+  set.seed(104)
+  fixture <- make_simulation_fixture(
+    max_uorfs = 1,
+    regions = c("cds", "uorf"),
+    region_proportion = list(
+      cds = list(RFP = 0.8),
+      uorf = list(RFP = 0.2)
+    ),
+    seqnames = "chr1"
+  )
+  # Default settings: no fragment end bias, so reads are drawn per position.
+  experiment <- run_simulated_experiment(
+    fixture,
+    lib_formats = list(RFP = "bam"),
+    ground_truth = TRUE
+  )
+  bam_path <- ORFik::filepath(experiment, "default")[1]
+  truth <- data.table::fread(sub("[.]bam$", "_ground_truth.tsv", bam_path))
+
+  expect_true(all(grepl("^(cds|uorf):[0-9]+$", truth$sampling_group)))
+
+  dropped_path <- sub("[.]bam$", "_dropped_reads.tsv", bam_path)
+  dropped <- if (file.exists(dropped_path)) {
+    data.table::fread(dropped_path)
+  } else data.table::data.table(region = character(0), reads = numeric(0))
+  for (region in c("cds", "uorf")) {
+    expected <- sum(SummarizedExperiment::assay(fixture$region_count_table[, 1], region))
+    simulated <- sum(truth[sub(":.*", "", sampling_group) == region, score])
+    lost <- sum(dropped[dropped$region == region, reads])
+    expect_equal(simulated + lost, expected, info = region)
+  }
+})
+
 test_that("simGenome supports multiple uORFs per transcript", {
   fixture <- make_simulation_fixture(max_uorfs = 2)
 
