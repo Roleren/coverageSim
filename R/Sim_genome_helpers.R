@@ -813,6 +813,8 @@ create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
       } else c(invalid_start[-c(1,2,3,4,5)], seq(end+1, end+5))
       possible_ends <- possible_ends[!(possible_ends %in% invalid_end)]
       possible_starts <- possible_starts[!(possible_starts %in% invalid_start)]
+      # Leader used up: nothing left to place (avoids min()/max() of an empty vector).
+      if (length(possible_starts) == 0L) break
       possible_ends <- possible_ends[(possible_ends > min(possible_starts) + 5) &
                                        (possible_ends < max(possible_starts) + uorf_max_length -1)]
     }
