@@ -21,7 +21,10 @@ test_that("batched RNase extension equals the original for reordered groups", {
   models <- list(a = list(exons = GenomicRanges::GRanges('chr1', IRanges::IRanges(c(1, 21), c(10, 30))), cumulative_start = c(1L, 11L), length = 20L, strand = '+'),
                  b = list(exons = GenomicRanges::GRanges('chr1', IRanges::IRanges(c(21, 1), c(30, 10))), cumulative_start = c(1L, 11L), length = 20L, strand = '-'))
   dt <- data.table::data.table(genes = c('b','a','b','a'), transcript_id = c('b','a','b','a'), start = c(25L, 7L, 8L, 22L), end = c(25L, 7L, 8L, 22L), region_position = c(1L, 1L, 2L, 2L), score = 1:4)
-  for (x in list(dt, dt[, !'region_position'], dt[0], dt[, genes := factor(genes)])) {
+  keyed <- data.table::copy(dt); data.table::setkey(keyed, genes)
+  indexed <- data.table::copy(dt); data.table::setindex(indexed, genes)
+  factor_dt <- data.table::copy(dt); factor_dt[, genes := factor(genes)]
+  for (x in list(dt, dt[, !'region_position'], dt[0], factor_dt, keyed, indexed)) {
     for (bias in list(list(RFP = 1), list(RFP = c(1,2,1)))) {
       expect_equal(append_rnase_to_simulated_rpf_table(data.table::copy(x), bias, models), original(data.table::copy(x), bias, models), tolerance = 0)
     }

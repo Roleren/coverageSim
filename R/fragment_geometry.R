@@ -457,7 +457,8 @@ append_rnase_to_simulated_rpf_table <- function(dt_range, rnase_bias,
   reach <- rnase_kernel_reach(rnase_bias)
   if (reach == 0L) return(dt_range)
   # Preserve split/rbindlist semantics for unusual grouping inputs.
-  if (nrow(dt_range) && !anyNA(dt_range$genes) && !is.factor(dt_range$genes)) {
+  if (nrow(dt_range) && !anyNA(dt_range$genes) && !is.factor(dt_range$genes) &&
+      is.null(data.table::key(dt_range)) && is.null(attr(dt_range, "index"))) {
     groups <- split(seq_len(nrow(dt_range)), dt_range$genes)
     indices <- starts <- ends <- positions <- vector("list", length(groups))
     has_pos <- "region_position" %in% names(dt_range)
