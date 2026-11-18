@@ -177,3 +177,28 @@ complex architectures in roughly the time of the current no-uORF run. Results mu
 
 Each step: tests first (AGENTS.md), Codex independent review of the diff, no change to default behaviour until the
 step is complete.
+
+## 7. Human region map: "I understand this region" / "I do not" (Håkon 2026-11-18, full steam)
+
+Per transcript (start: MANE/canonical human isoforms), on merged human P-site coverage (covRle, all and unique mappers):
+1. Candidates: every ORF of the transcript (ATG + near-cognate starts; all_candidate_translons.fst and the classifier's
+   calls as priors), plus the annotated CDS.
+2. Explain: frame-aware deconvolution of the codon-level P-site coverage into active translons: coverage in frame f at
+   codon i = sum over active ORFs k covering i in frame f of load_k * shape_k(i) + region background (leader/trailer
+   noise, out-of-frame bleed of each ORF from the measured frame distribution). Fit loads by non-negative least
+   squares / Poisson-NNLS, select the active set by penalised likelihood (BIC or L1 path). The flow model (section 3)
+   is the prior for how loads of coupled ORFs relate.
+3. Judge: compare residuals per window (e.g. 30 codons, plus start/stop neighbourhoods) with the predictive
+   distribution of the same explanation simulated by coverageSim at matched depth and protocol mixture (calibrated
+   overdispersion, start/stop peaks, mappability). Flag each window: understood / not understood, with a type for the
+   latter (unexplained in-frame signal, unexplained density step, unexplained peak cluster, frame switch, signal past
+   a stop = readthrough candidate, no signal where a strong translon is predicted) and "unknown" where mappability or
+   depth make any call impossible.
+4. Loop: every not-understood type becomes a candidate new architecture or noise term in coverageSim (frameshift,
+   readthrough, collisions/disomes, isoform mixing, ...), then re-run. Progress metric: fraction of expressed human
+   transcript sequence understood, per region class.
+Validation before human: on coverageSim architecture genomes the explainer must recover the truth (ORFs, loads) and flag
+<= 5% of windows when the simulator's own feature classes are used; when a class is held out (e.g. frameshift,
+readthrough, an untranslated decoy made translated), its windows must be flagged with the right type.
+Note: merged tracks sum thousands of libraries (protocol mixture), so calibration uses the merged-track noise, not a
+single library's.
