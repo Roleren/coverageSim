@@ -14,7 +14,7 @@
 
 - B20k genome Rprof inclusive: writer 91.44 → 52.80 s; placement 17.02 → 10.04 s.
 - Single runs; different system load may affect timings. Benchmark driver:
-  `analysis/benchmarks/speed_core.R`; pass 1 comparison: `../coveragesim_speed_core_20261118/bench/compiled{3,20}`.
+  `analysis/benchmarks/speed_core.R`; pass 1 comparison: `../../coveragesim_speed_core_20261118/bench/compiled{3,20}`.
 - Compiled writer preserves random draw order; `options(coverageSim.engine = "R")`
   selects the original writer. Twenty overlapping-frame seeds and an empty feature
   table matched in output and final RNG state; focused test: 41 passes.
