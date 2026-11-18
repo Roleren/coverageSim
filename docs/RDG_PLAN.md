@@ -25,8 +25,11 @@ libraries. Concretely, in order:
 3. Known gaps that matter (from 5b): UTR background, stop peak, replicate-shared pausing, read lengths, mappability.
 4. The "not understood" flag = model misfit: real region data outside the simulator's predictive range for every RDG
    architecture the classifier considers.
-Priority rule: every task is ranked by whether it helps classify real human regions correctly or flag misfit;
-software polish (C++, exotic options) only when it blocks that.
+Priority rule (corrected by Håkon the same day): runtime is top priority, because iteration speed is what matters:
+first fast code on the stable core paths (genome build, count tables, read sampling, fragment/coverage output), C++
+where profiling shows it pays, then iterate on biology. Do not over-optimise parts that may be dropped (no day spent on
+a feature that is still experimental). After speed, rank tasks by whether they help classify real human regions
+correctly or flag misfit; exotic options last.
 
 ## 1. What is there and what is missing
 
