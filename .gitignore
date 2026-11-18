@@ -3,9 +3,43 @@
 .RData
 .Ruserdata
 
+# Local reference material and presentation files; never commit this directory.
+/git_ignore/
+/CoverageSim_manuscript.pdf
+/CoverageSim_manuscript_additional_file_1.pdf
+
 *.2bit
 *.gtf
 BSgenome.Human.test.genc2522M/
 test_human.2bit
 test_human.2bit_Human.test_seed
 
+# Generated simulation and demo outputs. Runs write to coverageSim_data/runs/
+# beside the repository; these patterns only catch output a script still drops
+# next to itself.
+tests/tests_and_demos/*/experiment/
+tests/tests_and_demos/*/genome/
+tests/tests_and_demos/*/reads/
+analysis/workflows/*/experiment/
+analysis/workflows/*/genome/
+analysis/workflows/*/reads/
+analysis/workflows/*_G_end_dropout_summary.csv
+analysis/workflows/*/read_end_nt_summary/
+
+# Large external human input/output dataset; store outside the repository.
+
+# Personal experiment logbook; stays out of the repository by request.
+
+# Local agent notes (personal, go stale) and test logs.
+/.agents/
+/test_output.txt
+
+# Analysis code IS tracked; only the data and vendored third-party code inside
+# those folders is not. analysis/benchmarks/rust/upstream is a separate GPL-3 repository
+# (JackCurragh/RUST) -- its exact commit is recorded in each run manifest, so it
+# does not need to be redistributed here.
+analysis/benchmarks/rust/upstream/
+analysis/benchmarks/rust/.venv-rust-original/
+analysis/benchmarks/choros/results/
+analysis/benchmarks/choros/.Rhistory
+__pycache__/

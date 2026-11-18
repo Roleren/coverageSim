@@ -1,0 +1,55 @@
+test_that("Git excludes data and vendored code but retains every analysis source", {
+  testthat::skip_if(Sys.which("git") == "", "Git is unavailable")
+  rules <- testthat::test_path("..", "..", ".gitignore")
+  repository <- tempfile("coverageSim-git-scope-")
+  dir.create(repository)
+  file.copy(rules, file.path(repository, ".gitignore"))
+  system2("git", c("-C", shQuote(repository), "init", "--quiet"))
+
+  # Excluded for one of three reasons: it is bulk data, it is somebody else's
+  # code that we only reference, or it is personal material. Note that the
+  # folders themselves are not excluded -- only what sits inside them.
+  excluded <- c(
+    "analysis/benchmarks/rust/__pycache__/natural_end_model.cpython-312.pyc",
+    "analysis/benchmarks/rust/upstream/RUST/RUST/codon.py",
+    "analysis/benchmarks/rust/.venv-rust-original/lib/python3.12/site-packages/numpy/version.py",
+    "analysis/workflows/__pycache__/natural_end_model.cpython-312.pyc",
+    "analysis/benchmarks/choros/results/summary.tsv",
+    "git_ignore/coverageSim_bias_overview.xlsx",
+    ".agents/onboarding.md",
+    "CoverageSim_manuscript.pdf",
+    "tests/tests_and_demos/human_flavoured_riboseq/reads/RFP_WT_1.bam",
+    "test_human.2bit",
+    "test_human.2bit_Human.test_seed",
+    "test_human.gtf",
+    "BSgenome.Human.test.genc2522M/inst/extdata/single_sequences.2bit"
+  )
+  # Every source file is tracked, including the analysis code that lives beside
+  # the package and the benchmark tests that skip without their external data.
+  included <- c(
+    "R/Sim_reads_from_counts.R", "R/fragment_geometry.R", "R/code_version.R",
+    "man/simNGScoverage.Rd",
+    "tests/testthat/test_simulations.R",
+    "tests/testthat/test_simulated_rpf_fragments.R",
+    "tests/testthat/test_choros_scripts.R",
+    "tests/testthat/test_analysis_separation.R",
+    "tests/testthat/test_bias_overview_workbook.R",
+    "tests/testthat/test_deprecated_dataset_layout.R",
+    "tests/testthat/natural_end_model_checks.py",
+    "analysis/workflows/simulate_dataset.R",
+    "analysis/workflows/figure3c_alpha_calibration.R",
+    "analysis/qc/simulated_rpf_qc.R",
+    "analysis/qc/simple_riboseq_qc.R",
+    "analysis/R/real_input_validation.R",
+    "analysis/benchmarks/choros/choros_utils.R",
+    "analysis/R/Learn_from_input.R",
+    "analysis/benchmarks/rust/natural_end_model.py",
+    "analysis/tests/test_learn_from_input.R"
+  )
+  ignored <- system2(
+    "git",
+    c("-C", shQuote(repository), "check-ignore", "--no-index", "--stdin"),
+    input = c(excluded, included), stdout = TRUE
+  )
+  expect_setequal(ignored, excluded)
+})

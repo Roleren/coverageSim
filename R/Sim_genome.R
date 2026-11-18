@@ -10,33 +10,91 @@
 #' https://www.ncbi.nlm.nih.gov/pmc/articles/PMC403801/
 #' @param out_dir = "~/Desktop/benchmark_ORFPrediction",
 #' @param genome_name = "Homo_sapiens_dummy",
-#' @param n = 500, integer, number of genes to create
-#' @param cds_length = rep.int(300, n)
-#' @param cds_exons = 2,
-#' @param cds_intron_length = sample(c(30, 30), size = n, replace = TRUE),
-#' only used any cds_exons > 1. Is the size excluding the '5 GT motif.
-#' @param leader_length = rep.int(140, n),
-#' @param trailer_length = rep.int(105, n),
+#' @param n = 500. Number of genes to create, one whole number of at least 1.
+#' @param cds_length = rep.int(300, n). Coding sequence length per gene, in
+#'   nucleotides, \strong{without} the start and stop codon, which are added to it
+#'   (300 gives a 306 nt CDS). One whole number per gene, at least 9 and at
+#'   least \code{uorf_max_length} + 3, divisible by 3 since a coding sequence is
+#'   read in whole codons.
+#' @param cds_exons = 2. How many exons the coding sequence is split into, one
+#'   whole number of at least 1 and smaller than every \code{cds_length}.
+#'   More than one means reads can cross a splice junction, which is what
+#'   exercises the spliced-alignment handling downstream.
+#' @param cds_intron_length = sample(c(30, 30), size = n, replace = TRUE).
+#'   Intron length, including the GT motif at its 5' end; only used (and
+#'   checked) when \code{cds_exons} > 1. Whole numbers of at least 3, divisible
+#'   by 3, one per gene or one value for all genes.
+#' @param leader_length = rep.int(140, n). Length of the 5' untranslated region
+#'   ahead of the start codon, one whole number of at least 1 per gene. This is
+#'   where uORFs are placed, so a short leader leaves little room for them.
+#'   The length does not change how many reads the leader gets (that is
+#'   \code{region_proportion} in \code{simCountTablesRegions()}), only how
+#'   densely they lie: the same reads spread over a longer leader.
+#' @param trailer_length = rep.int(105, n). Length of the 3' untranslated region
+#'   after the stop codon, one whole number of at least 0 per gene (0 = the
+#'   transcript ends with the stop codon). As for the leader, the length sets
+#'   the read density there, not the number of reads.
 #' @param gene_names = paste0("ENSGTEST1000", seq(n)),
 #' @param tx_names = paste0("ENSTTEST1000", seq(n)),
-#' @param seqnames = \code{list(paste0("chr", seq(n)), paste0("chr", seq(23)))[[1]]},
-#' @param flank_length = 305,
-#' @param strand = c("+", sample(c("+", "-"), n-1, replace = T)),
-#' @param start_codons = "ATG",
-#' @param stop_codons = c("TAG", "TGA", "TAA"),
-#' @param max_uorfs = 1,
-#' @param uorfs_can_overlap = TRUE,
-#' @param uorfs_can_overlap_cds = TRUE, logical/integer, 0/FALSE is no overlap, 1/TRUE is can overlap
-#' , 2 is must overlap.
-#' @param export_txdb logical, default TRUE. Export TxDb object of gtf. Highly adviced,
-#' but for testing you can turn it of to speed up raw output.
-#' @param uorf_max_length = 60
-#' @param debug_on logical, default TRUE. Activate debug on suspected error. This can happen
+#' @param seqnames Character vector of chromosome names. When NULL,
+#'   the default compact layout uses up to \code{chromosome_count} chromosomes.
+#' @param chromosome_layout Either \code{"compact"} (the default), which places
+#'   multiple genes on chromosomes, or
+#'   \code{"legacy_one_gene_per_contig"}, which recreates the historical
+#'   \code{chr1}, ..., \code{chrN} layout. Only used when \code{seqnames} is NULL.
+#' @param chromosome_count = 24. Maximum number of chromosomes in the default
+#'   compact layout, one whole number of at least 1.
+#' @param chromosome_weights Optional sampling weights controlling how genes are
+#'   distributed among chromosomes. Must have one positive value per chromosome.
+#' @param flank_length = 305. Genomic sequence added on either side of each
+#'   gene: whole numbers of at least 0, one per gene or one value for all
+#'   genes. Reads never fall here, but the space means a gene is not flush
+#'   against a chromosome edge, where coordinate handling behaves differently.
+#' @param strand = c("+", sample(c("+", "-"), n-1, replace = T)). Which strand
+#'   each gene sits on. The default deliberately mixes both: minus-strand genes
+#'   run against the genome's coordinates and are a common source of
+#'   off-by-one and reverse-complement errors, so a test genome should contain
+#'   them.
+#' @param start_codons = "ATG". Codon(s) that open a coding sequence: three
+#'   letters from A, C, G, T each.
+#' @param stop_codons = c("TAG", "TGA", "TAA"), a non-empty subset (no
+#'   duplicates) of the standard genetic code's three stop codons. Use a
+#'   smaller subset to simulate stop-codon usage bias (e.g. \code{"TGA"}
+#'   alone). Codons outside \code{c("TAG", "TGA", "TAA")} are not supported:
+#'   the CDS/uORF integrity checks rely on \code{Biostrings::translate()}'s
+#'   default (standard) genetic code to recognize stops, so simulating an
+#'   organism/organelle with a different genetic code (e.g. mitochondrial,
+#'   where TGA is not a stop) is out of scope here.
+#' @param max_uorfs = 1. Upper limit on how many upstream ORFs a gene may get,
+#'   one whole number of at least 0 (0 = no uORFs). A gene can get fewer when
+#'   its leader has no room left; a leader shorter than 4 nt gets none. If no
+#'   gene has room for a uORF, simGenome() stops with an error.
+#'   These are short reading frames in the leader that ribosomes can translate
+#'   before reaching the main coding sequence, so they carry real signal and are
+#'   not merely decoration.
+#' @param uorfs_can_overlap = TRUE. Whether two uORFs of the same gene may share
+#'   sequence: TRUE or FALSE.
+#' @param uorfs_can_overlap_cds = TRUE. Whether a uORF may run into the CDS:
+#'   0 (FALSE) = no overlap, 1 (TRUE) = may overlap, 2 = must overlap.
+#'   Such a uORF starts in the leader and ends after the CDS start codon, so it
+#'   needs \code{uorf_max_length} of at least 12: with 2 a smaller value
+#'   stops with an error, with 1 all uORFs then stay in the leader.
+#' @param export_txdb TRUE or FALSE, default TRUE. Export TxDb object of gtf.
+#'   Highly advised, but for testing you can turn it off to speed up raw output.
+#' @param uorf_max_length = 60. Longest a uORF may be, in nucleotides
+#'   including its start and stop codon: one whole number of at least 6 (a
+#'   start codon directly followed by a stop), divisible by 3. Real
+#'   uORFs are short, which is part of what distinguishes them from a second
+#'   coding sequence.
+#' @param debug_on TRUE or FALSE, default TRUE. Activate debug on suspected error. This can happen
 #' on uORF sampling, with corner case created transcripts. Useful to debug to understand why it failed.
 #' If you are not interested and you believe settings are valid, just rerun until it works.
 #' @import Biostrings ORFik data.table
 #' @return a named character vector with paths to output files.
 #' genome (fasta), transcriptome (gtf), transcript Database (TxDb) and uorfs (rds)
+#' The settings this run used, and the random state it started from, are saved
+#' next to the genome as \code{<genome_name>_simulation_record.rds};
+#' \code{simNGScoverage()} adds them to its \code{simulation_report.tsv}.
 #' @export
 #' @examples
 #' # 6 genes on 6 chromosomes'
@@ -53,7 +111,10 @@ simGenome <- function(n = 500,
                       trailer_length = rep.int(105, n),
                       gene_names = paste0("ENSGTEST1000", seq(n)),
                       tx_names = paste0("ENSTTEST1000", seq(n)),
-                      seqnames = list(paste0("chr", seq(n)), paste0("chr", seq(23)))[[1]],
+                      seqnames = NULL,
+                      chromosome_layout = c("compact", "legacy_one_gene_per_contig"),
+                      chromosome_count = 24L,
+                      chromosome_weights = NULL,
                       flank_length = 305,
                       strand = c("+", sample(c("+", "-"), n-1, replace = TRUE)),
                       start_codons = "ATG",
@@ -64,7 +125,25 @@ simGenome <- function(n = 500,
                       uorf_max_length = 60,
                       export_txdb = TRUE,
                       debug_on = TRUE) {
+  # Read before any setting is used, so recording cannot change the draws.
+  rng_state <- current_rng_state()
+  supplied <- names(match.call())[-1]
+  chromosome_layout <- match.arg(chromosome_layout)
+  check_whole_numbers(n, "n", min = 1)
+  # chromosome_count only counts when the chromosomes are not named directly.
+  chromosome_count_used <- is.null(seqnames) &&
+    chromosome_layout != "legacy_one_gene_per_contig"
+  seqnames <- resolve_simulated_seqnames(
+    n = n,
+    seqnames = seqnames,
+    chromosome_layout = chromosome_layout,
+    chromosome_count = chromosome_count
+  )
   genome_input_test_controller()
+  # The next step turns these two into per-gene coordinates, so keep them as
+  # they were given for the record.
+  seqnames_given <- seqnames
+  flank_length_given <- flank_length
   genome_exon_flanks_controller()
 
   ## Create annotation
@@ -91,5 +170,13 @@ simGenome <- function(n = 500,
                                      exon_cds_ranges, gene_ranges,
                                      transcript_ranges, tx_names, gene_names)
   export_genome_output_controller()
+  # Recorded last, once every setting has been used in its own order.
+  step_record <- make_step_record(
+    "simGenome", sys.function(), environment(), supplied, rng_state,
+    not_used = if (!chromosome_count_used) "chromosome_count"
+  )
+  step_record$settings$seqnames <- seqnames_given
+  step_record$settings$flank_length <- flank_length_given
+  saveRDS(step_record, genome_record_path(simGenome["genome"]))
   return(simGenome)
 }

@@ -4,22 +4,42 @@
 \alias{shapes}
 \title{Get shape function}
 \usage{
-shapes(i = 3, Z = 0.1, v = 1)
+shapes(i = 9)
 }
 \arguments{
-\item{i}{integer index of default shapes to get,
-default is 3. Which returns a a function using 3 cosings.}
-
-\item{Z}{integer, default 0.1. For cosine shapes,
-the zero inflation scaler,  the avoid 0 probability positions}
-
-\item{v}{numeric, default 1. For cosine shapes, scales the first
-order cosine by the power of 'v'}
+\item{i}{integer, default 9 (the same default \code{simNGScoverage()}
+itself uses). Half-width of the smoothing window (the full window is
+\code{2*i + 1} codons). Raising it above about 3 has little further effect.
+Larger \code{i} matters most for sparsely sampled genes: at low read depth
+it increases how much reads cluster into a few positions rather than
+spreading out (higher skew and peak-to-median ratio), while at high read
+depth the effect is negligible. \code{i = 0} disables only this smoothing
+step; codon bias and RNase-kernel processing elsewhere in the pipeline
+still apply, so this alone does not produce a fully uniform coverage model.}
 }
 \value{
-a quote object to be evaluated inside the coverage function
+a quote object to be evaluated inside the coverage function, or
+ NULL when \code{i = 0}.
 }
 \description{
-Either uniform 0 (null model), cosine signals 1-4 or
-rolling windows with auto correlation max.lag 'i'
+Returns a quoted expression describing the codon-level smoothing applied
+along a gene: a rolling window (\code{autocor_window()}, width
+\code{2*i + 1}, its \code{max.lag} argument) that averages each codon's
+weight with those of its neighbours.
+}
+\details{
+What this represents is ribosome queuing. A ribosome that is slow to leave a
+codon holds up the ones behind it, so a single slow position raises the
+occupancy of the positions around it rather than only its own. The window
+therefore couples positions by \emph{distance}: a codon \code{d} places away
+contributes with weight \code{1 / (d + 1)^1.5}. It never sees which codons
+they are, so it models nothing that depends on codon identity -- in
+particular not any effect of two nearby codons being read by the same tRNA,
+which would need a table over codon pairs rather than one weight per codon.
+
+Because of that distance penalty the nominal width matters far less than it
+looks. Measured on an independently drawn weight vector, the lag-1
+correlation it produces is 0.67 for \code{i = 3}, \code{i = 9} and
+\code{i = 20} alike, against 0.15 with the smoothing switched off: positions
+beyond about three codons carry too little weight to change the result.
 }

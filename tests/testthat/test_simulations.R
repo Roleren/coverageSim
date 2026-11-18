@@ -1,7 +1,8 @@
 make_simulation_fixture <- function(max_uorfs = 0,
                                     regions = "cds",
                                     region_proportion = NULL,
-                                    export_txdb = TRUE) {
+                                    export_txdb = TRUE,
+                                    seqnames = NULL) {
   genome_dir <- tempfile("coverageSim-genome-")
   exp_dir <- tempfile("coverageSim-exp-")
   dir.create(genome_dir)
@@ -13,6 +14,7 @@ make_simulation_fixture <- function(max_uorfs = 0,
     genome_name = paste0("artificial_uorf_", max_uorfs),
     max_uorfs = max_uorfs,
     cds_length = c(rep.int(330, 3), rep.int(300, 3)),
+    seqnames = seqnames,
     export_txdb = export_txdb
   ))
 
@@ -45,7 +47,7 @@ make_simulation_fixture <- function(max_uorfs = 0,
 
 run_simulated_experiment <- function(fixture,
                                      lib_formats = list(RFP = "ofst"),
-                                     validate = FALSE) {
+                                     validate = FALSE, ...) {
   exp_name <- basename(tempfile("coverageSim-exp-"))
   simNGScoverage(
     fixture$sim_genome,
@@ -53,9 +55,24 @@ run_simulated_experiment <- function(fixture,
     exp_name = exp_name,
     exp_save_dir = fixture$exp_dir,
     libFormats = lib_formats,
-    validate = validate
+    validate = validate,
+    ...
   )
 }
+
+test_that("simNGScoverage retains the explicitly named legacy point mode", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  experiment <- run_simulated_experiment(
+    fixture,
+    fragment_mode = "legacy_point"
+  )
+  imported <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+
+  expect_s4_class(imported, "GRanges")
+  expect_false(is(imported, "GAlignments"))
+  expect_true(all(GenomicRanges::width(imported) == 1L))
+  expect_true(all(S4Vectors::mcols(imported)$size %in% 27:29))
+})
 
 test_that("simGenome exports the expected files for coding-only genomes", {
   fixture <- make_simulation_fixture(max_uorfs = 0)
@@ -64,6 +81,131 @@ test_that("simGenome exports the expected files for coding-only genomes", {
   expect_true(all(file.exists(unname(fixture$sim_genome))))
   expect_s4_class(ORFik::loadTxdb(fixture$sim_genome["txdb"]), "TxDb")
   expect_true(all(ORFik::widthPerGroup(fixture$cds, FALSE) %% 3 == 0))
+})
+
+test_that("simGenome places multiple genes on compact chromosomes", {
+  genome_dir <- tempfile("coverageSim-compact-genome-")
+  dir.create(genome_dir)
+
+  set.seed(101)
+  simulated <- suppressWarnings(simGenome(
+    n = 30,
+    out_dir = genome_dir,
+    genome_name = "compact_genome",
+    max_uorfs = 0,
+    export_txdb = FALSE,
+    debug_on = FALSE
+  ))
+
+  genome <- Biostrings::readDNAStringSet(simulated[["genome"]])
+  annotation <- rtracklayer::import(simulated[["gtf"]])
+  genes <- annotation[annotation$type == "gene"]
+
+  expect_length(genome, 24L)
+  expect_equal(names(genome), paste0("chr", seq_len(24L)))
+  expect_length(genes, 30L)
+  expect_true(any(table(as.character(GenomicRanges::seqnames(genes))) > 1L))
+  expect_true(all(vapply(
+    split(genes, GenomicRanges::seqnames(genes)),
+    function(x) GenomicRanges::isDisjoint(x, ignore.strand = TRUE),
+    logical(1)
+  )))
+  genome_widths <- stats::setNames(Biostrings::width(genome), names(genome))
+  maximum_gene_ends <- tapply(
+    GenomicRanges::end(genes),
+    as.character(GenomicRanges::seqnames(genes)),
+    max
+  )
+  expect_true(all(
+    maximum_gene_ends < genome_widths[names(maximum_gene_ends)]
+  ))
+})
+
+test_that("simGenome supports explicit chromosomes and weighted gene assignment", {
+  genome_dir <- tempfile("coverageSim-weighted-genome-")
+  dir.create(genome_dir)
+
+  set.seed(102)
+  simulated <- suppressWarnings(simGenome(
+    n = 12,
+    out_dir = genome_dir,
+    genome_name = "weighted_genome",
+    seqnames = c("chrA", "chrB"),
+    chromosome_weights = c(1, 0.01),
+    max_uorfs = 0,
+    export_txdb = FALSE,
+    debug_on = FALSE
+  ))
+
+  genome <- Biostrings::readDNAStringSet(simulated[["genome"]])
+  annotation <- rtracklayer::import(simulated[["gtf"]])
+  genes <- annotation[annotation$type == "gene"]
+
+  expect_equal(names(genome), c("chrA", "chrB"))
+  expect_setequal(as.character(GenomicRanges::seqnames(genes)), names(genome))
+  expect_gt(sum(as.character(GenomicRanges::seqnames(genes)) == "chrA"),
+            sum(as.character(GenomicRanges::seqnames(genes)) == "chrB"))
+})
+
+test_that("simGenome retains the legacy one-gene-per-contig layout", {
+  genome_dir <- tempfile("coverageSim-legacy-genome-")
+  dir.create(genome_dir)
+
+  simulated <- suppressWarnings(simGenome(
+    n = 5,
+    out_dir = genome_dir,
+    genome_name = "legacy_genome",
+    chromosome_layout = "legacy_one_gene_per_contig",
+    max_uorfs = 0,
+    export_txdb = FALSE,
+    debug_on = FALSE
+  ))
+
+  genome <- Biostrings::readDNAStringSet(simulated[["genome"]])
+  annotation <- rtracklayer::import(simulated[["gtf"]])
+  genes <- annotation[annotation$type == "gene"]
+
+  expect_equal(names(genome), paste0("chr", seq_len(5L)))
+  gene_counts <- table(as.character(GenomicRanges::seqnames(genes)))
+  expect_equal(names(gene_counts), paste0("chr", seq_len(5L)))
+  expect_equal(as.integer(gene_counts), rep.int(1L, 5L))
+})
+
+test_that("multiple transcripts on one chromosome retain counts through BAM export", {
+  set.seed(103)
+  fixture <- make_simulation_fixture(
+    max_uorfs = 1,
+    regions = c("cds", "uorf"),
+    region_proportion = list(
+      cds = list(RFP = 0.9),
+      uorf = list(RFP = 0.1)
+    ),
+    seqnames = "chr1"
+  )
+  experiment <- run_simulated_experiment(
+    fixture,
+    lib_formats = list(RFP = "bam"),
+    ground_truth = TRUE
+  )
+
+  bam_path <- ORFik::filepath(experiment, "default")[1]
+  truth_path <- sub("[.]bam$", "_ground_truth.tsv", bam_path)
+  truth <- data.table::fread(truth_path)
+  bam <- Rsamtools::scanBam(
+    bam_path,
+    param = Rsamtools::ScanBamParam(what = c("rname", "qname"))
+  )[[1]]
+  expected <- sum(SummarizedExperiment::assay(fixture$region_count_table[, 1], "cds")) +
+    sum(SummarizedExperiment::assay(fixture$region_count_table[, 1], "uorf"))
+  # A uORF too close to the transcript start for any complete fragment loses
+  # its reads; they are listed next to the BAM file.
+  dropped_path <- sub("[.]bam$", "_dropped_reads.tsv", bam_path)
+  dropped <- if (file.exists(dropped_path)) sum(data.table::fread(dropped_path)$reads) else 0
+
+  expect_equal(sum(truth$score) + dropped, expected)
+  expect_equal(length(bam$qname), sum(truth$score))
+  expect_equal(unique(as.character(bam$rname)), "chr1")
+  expect_gt(data.table::uniqueN(truth$transcript_id), 1L)
 })
 
 test_that("simGenome supports multiple uORFs per transcript", {
@@ -116,7 +258,43 @@ test_that("simNGScoverage writes importable output for a small RFP simulation", 
   expect_true(all(file.exists(default_path)))
 
   imported <- ORFik::fimport(default_path)
-  expect_s4_class(imported, "GRanges")
+  expect_s4_class(imported, "GAlignments")
+  expect_gt(length(imported), 0)
+})
+
+test_that("simNGScoverage supports codon sequence bias across multiple CDS transcripts", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  experiment <- simNGScoverage(
+    fixture$sim_genome,
+    fixture$region_count_table[, 1],
+    exp_name = basename(tempfile("coverageSim-codon-bias-")),
+    exp_save_dir = fixture$exp_dir,
+    seq_bias = load_seq_bias(type = "codon", shift = "p-site", bias = "R2"),
+    libFormats = list(RFP = "ofst"),
+    validate = FALSE
+  )
+
+  imported <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+
+  expect_s4_class(experiment, "experiment")
+  expect_gt(length(imported), 0)
+})
+
+test_that("simNGScoverage supports default RFP frame coverage without sequence bias", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  experiment <- simNGScoverage(
+    fixture$sim_genome,
+    fixture$region_count_table[, 1],
+    exp_name = basename(tempfile("coverageSim-no-seq-bias-")),
+    exp_save_dir = fixture$exp_dir,
+    seq_bias = NULL,
+    libFormats = list(RFP = "ofst"),
+    validate = FALSE
+  )
+
+  imported <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+
+  expect_s4_class(experiment, "experiment")
   expect_gt(length(imported), 0)
 })
 
@@ -155,3 +333,290 @@ test_that("simNGScoverage writes BAM output through the format-specific writer",
   expect_true(file.exists(bam_path))
   expect_gt(length(Rsamtools::scanBam(bam_path)[[1]]$pos), 0)
 })
+
+test_that("simNGScoverage writes optional PCR duplicates as flagged BAM records", {
+  set.seed(705)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  for (assay_name in c("gene", "cds")) {
+    SummarizedExperiment::assay(
+      fixture$region_count_table, assay_name
+    )[, 1] <- 100L
+  }
+  truth_dir <- tempfile("artifact-truth-")
+  experiment <- run_simulated_experiment(
+    fixture, seq_bias = NULL, rnase_bias = list(RFP = NULL),
+    auto_correlation = NULL, lib_formats = list(RFP = "bam"),
+    ground_truth = truth_dir,
+    technical_artifacts = list(duplication_rate = 1, duplicate_copies = 1L)
+  )
+  bam <- ORFik::filepath(experiment, "default")[[1]]
+  raw <- Rsamtools::scanBam(
+    bam, param = Rsamtools::ScanBamParam(what = "flag")
+  )[[1]]
+  expect_length(raw$flag, 1200)
+  expect_equal(sum(bitwAnd(raw$flag, 1024L) != 0L), 600)
+  artifact_truth <- list.files(truth_dir, pattern = "artifact_truth", full.names = TRUE)
+  expect_length(artifact_truth, 1)
+  truth <- data.table::fread(artifact_truth)
+  expect_equal(sum(truth$is_duplicate), 600)
+  expect_equal(sum(truth$is_secondary), 0)
+})
+
+test_that("active end selection runs through MN and DMN with conserved transcript counts", {
+  set.seed(71)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  for (mode in c("MN", "DMN", "DMN_smearing")) {
+    truth_dir <- tempfile("end-selection-truth-")
+    experiment <- run_simulated_experiment(fixture,
+      seq_bias = if (mode == "DMN_smearing") load_seq_bias(bias = "R10") else NULL,
+      rnase_bias = list(RFP = if (mode == "DMN_smearing") c(0.5, 2, 1, 10, 2, 1, 0.5) else NULL),
+      auto_correlation = NULL,
+      sampling = list(cds = list(RFP = if (mode == "MN") "MN" else "DMN")),
+      read_lengths_per = list(RFP = 28L), ground_truth = truth_dir,
+      fragment_geometry = list(source = "user", site_offset = 15L,
+        five_prime_bias = list(source = "user", strength = 1,
+          table = make_synthetic_end_bias(enriched_weight = 4))))
+    truth <- data.table::fread(list.files(truth_dir, full.names = TRUE)[1])
+    expected <- SummarizedExperiment::assay(fixture$region_count_table, "cds")[, 1]
+    observed <- truth[, .(count = sum(score)), by = transcript_id]
+    expect_equal(observed$count[match(names(expected), observed$transcript_id)],
+                 unname(expected))
+    expect_true(all(truth$fragment_length == 28))
+    imported <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+    expect_equal(sum(S4Vectors::mcols(imported)$score), sum(expected))
+  }
+})
+
+test_that("dmn_alpha_scale controls positional roughness without changing read totals", {
+  set.seed(720)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  for (assay_name in c("gene", "cds")) {
+    SummarizedExperiment::assay(
+      fixture$region_count_table, assay_name
+    )[, 1] <- 10000L
+  }
+  run_scale <- function(scale, seq_bias = NULL) {
+    set.seed(721)
+    experiment <- run_simulated_experiment(
+      fixture,
+      fragment_mode = "legacy_point",
+      seq_bias = seq_bias,
+      ideal_coverage = list(cds = list(RFP = quote(rep(1, x)))),
+      rnase_bias = list(RFP = NULL),
+      auto_correlation = NULL,
+      sampling = list(cds = list(RFP = "DMN")),
+      dmn_alpha_scale = scale
+    )
+    reads <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+    data.table::data.table(
+      seqnames = as.character(GenomicRanges::seqnames(reads)),
+      score = S4Vectors::mcols(reads)$score
+    )[, .(
+      total = sum(score),
+      peak_fraction = max(score) / sum(score),
+      occupied_positions = .N
+    ), by = seqnames]
+  }
+
+  rough <- run_scale(0.001)
+  smooth <- run_scale(100)
+  expect_equal(sum(rough$total), 60000)
+  expect_equal(sum(smooth$total), 60000)
+  expect_gt(stats::median(rough$peak_fraction),
+            5 * stats::median(smooth$peak_fraction))
+  expect_lt(stats::median(rough$occupied_positions),
+            stats::median(smooth$occupied_positions))
+
+  learned_profile <- load_seq_bias()
+  learned_profile[, dmn_alpha_scale := 0.001]
+  automatic <- run_scale(NULL, learned_profile)
+  explicit <- run_scale(0.001, learned_profile)
+  expect_equal(automatic, explicit)
+})
+
+test_that("dmn_family/dmn_gdm_scale/dmn_zero_inflation default to the legacy DMN sampling", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  common_args <- list(
+    fixture = fixture,
+    fragment_mode = "legacy_point",
+    ideal_coverage = list(cds = list(RFP = quote(rep(1, x)))),
+    rnase_bias = list(RFP = NULL),
+    auto_correlation = NULL,
+    sampling = list(cds = list(RFP = "DMN"))
+  )
+
+  set.seed(722)
+  legacy <- do.call(run_simulated_experiment, common_args)
+  set.seed(722)
+  explicit_defaults <- do.call(run_simulated_experiment, c(common_args, list(
+    dmn_family = "dirichlet", dmn_gdm_scale = 1, dmn_zero_inflation = 0
+  )))
+
+  legacy_reads <- ORFik::fimport(ORFik::filepath(legacy, "default")[1])
+  explicit_reads <- ORFik::fimport(ORFik::filepath(explicit_defaults, "default")[1])
+  expect_equal(S4Vectors::mcols(legacy_reads)$score, S4Vectors::mcols(explicit_reads)$score)
+  expect_equal(GenomicRanges::start(legacy_reads), GenomicRanges::start(explicit_reads))
+})
+
+test_that("dmn_zero_inflation concentrates reads onto fewer positions without changing read totals", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  for (assay_name in c("gene", "cds")) {
+    SummarizedExperiment::assay(
+      fixture$region_count_table, assay_name
+    )[, 1] <- 10000L
+  }
+  run_zi <- function(zero_inflation) {
+    set.seed(723)
+    experiment <- run_simulated_experiment(
+      fixture,
+      fragment_mode = "legacy_point",
+      ideal_coverage = list(cds = list(RFP = quote(rep(1, x)))),
+      rnase_bias = list(RFP = NULL),
+      auto_correlation = NULL,
+      sampling = list(cds = list(RFP = "DMN")),
+      dmn_zero_inflation = zero_inflation
+    )
+    reads <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+    data.table::data.table(
+      seqnames = as.character(GenomicRanges::seqnames(reads)),
+      score = S4Vectors::mcols(reads)$score
+    )[, .(total = sum(score), occupied_positions = .N), by = seqnames]
+  }
+
+  off <- run_zi(0)
+  on <- run_zi(0.9)
+  expect_equal(sum(off$total), 60000)
+  expect_equal(sum(on$total), 60000)
+  expect_lt(stats::median(on$occupied_positions), stats::median(off$occupied_positions))
+
+  for (invalid in list(-0.1, 1, NA_real_, Inf, "0.5")) {
+    expect_error(
+      run_simulated_experiment(fixture, fragment_mode = "legacy_point",
+                               dmn_zero_inflation = invalid),
+      "dmn_zero_inflation"
+    )
+  }
+})
+
+test_that("dmn_family = 'generalized' runs end-to-end and preserves read totals", {
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  set.seed(724)
+  experiment <- run_simulated_experiment(
+    fixture,
+    fragment_mode = "legacy_point",
+    ideal_coverage = list(cds = list(RFP = quote(rep(1, x)))),
+    rnase_bias = list(RFP = NULL),
+    auto_correlation = NULL,
+    sampling = list(cds = list(RFP = "DMN")),
+    dmn_family = "generalized",
+    dmn_gdm_scale = 1.5
+  )
+  reads <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+  expect_equal(sum(S4Vectors::mcols(reads)$score),
+              sum(SummarizedExperiment::assay(fixture$region_count_table, "cds")[, 1]))
+
+  for (invalid in list(0, -1, NA_real_, Inf, "1")) {
+    expect_error(
+      run_simulated_experiment(fixture, fragment_mode = "legacy_point",
+                               dmn_family = "generalized", dmn_gdm_scale = invalid),
+      "dmn_gdm_scale"
+    )
+  }
+  expect_error(
+    run_simulated_experiment(fixture, fragment_mode = "legacy_point",
+                             dmn_family = "not_a_family")
+  )
+})
+
+test_that("dmn_zero_inflation/dmn_family also apply on the deferred simulated-RPF fragment-geometry path", {
+  set.seed(73)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  expected <- SummarizedExperiment::assay(fixture$region_count_table, "cds")[, 1]
+  fragment_geometry <- list(source = "user", site_offset = 15L,
+    five_prime_bias = list(source = "user", strength = 1,
+      table = make_synthetic_end_bias(enriched_weight = 4)))
+
+  for (zigdm_args in list(
+    list(dmn_zero_inflation = 0.6),
+    list(dmn_family = "generalized", dmn_gdm_scale = 1.5),
+    list(dmn_family = "generalized", dmn_gdm_scale = 1.5, dmn_zero_inflation = 0.4)
+  )) {
+    truth_dir <- tempfile("zigdm-deferred-truth-")
+    experiment <- do.call(run_simulated_experiment, c(
+      list(fixture = fixture, rnase_bias = list(RFP = NULL), auto_correlation = NULL,
+          sampling = list(cds = list(RFP = "DMN")), read_lengths_per = list(RFP = 28L),
+          ground_truth = truth_dir, fragment_geometry = fragment_geometry),
+      zigdm_args
+    ))
+    truth <- data.table::fread(list.files(truth_dir, full.names = TRUE)[1])
+    observed <- truth[, .(count = sum(score)), by = transcript_id]
+    expect_equal(observed$count[match(names(expected), observed$transcript_id)],
+                unname(expected))
+    imported <- ORFik::fimport(ORFik::filepath(experiment, "default")[1])
+    expect_equal(sum(S4Vectors::mcols(imported)$score), sum(expected))
+  }
+})
+
+test_that("shuffled input counts remain attached to their transcript identifiers", {
+  set.seed(911)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds", seqnames = "chr1")
+  table <- fixture$region_count_table[c(6, 2, 4, 1, 5, 3), 1]
+  values <- c(101L, 203L, 307L, 409L, 503L, 607L)
+  for (assay in c("gene", "cds")) SummarizedExperiment::assay(table, assay)[, 1] <- values
+  fixture$region_count_table <- table
+  for (strength in c(0, 1)) {
+    dir <- tempfile("shuffled-counts-truth-")
+    run_simulated_experiment(fixture, seq_bias = NULL, auto_correlation = NULL,
+      rnase_bias = list(RFP = NULL), ground_truth = dir,
+      fragment_geometry = list(source = "user", site_offset = 15L,
+        five_prime_bias = list(source = "user", strength = strength,
+          table = make_synthetic_end_bias())))
+    truth <- data.table::fread(list.files(dir, full.names = TRUE)[1])
+    actual <- truth[, .(reads = sum(score)), by = transcript_id]
+    expect_equal(actual$reads[match(rownames(table), actual$transcript_id)], values)
+  }
+})
+
+test_that("uORF reads of a gene without a uORF are left out and reported", {
+  set.seed(1)
+  genome_dir <- tempfile("genome-"); dir.create(genome_dir)
+  # The first two leaders are too short for a uORF.
+  genome <- suppressWarnings(suppressMessages(simGenome(
+    n = 6, out_dir = genome_dir, genome_name = "g", max_uorfs = 1,
+    leader_length = c(3, 3, 140, 140, 140, 140), debug_on = FALSE
+  )))
+  with_uorf <- unique(ORFik::txNames(readRDS(genome["uorfs"])))
+  counts <- suppressMessages(simCountTables(
+    ORFik::loadRegion(genome["txdb"], "cds"), libtypes = "RFP",
+    print_statistics = FALSE
+  ))
+  regions <- suppressMessages(simCountTablesRegions(
+    counts, regionsToSample = c("leader", "cds", "trailer", "uorf")
+  ))
+  uorf_counts <- SummarizedExperiment::assay(regions, "uorf")[, 1]
+  no_room <- setdiff(names(uorf_counts)[uorf_counts > 0], with_uorf)
+  expect_gt(length(no_room), 0L)
+  run <- function(regions, mode) {
+    out_dir <- tempfile("coverage-"); dir.create(out_dir)
+    expect_message(
+      suppressWarnings(simNGScoverage(genome, regions, out_dir = out_dir,
+                                      fragment_mode = mode,
+                                      exp_name = basename(out_dir),
+                                      exp_save_dir = out_dir)),
+      "uORF reads left out for"
+    )
+    data.table::fread(file.path(out_dir, paste0(colnames(regions)[1],
+                                                "_dropped_reads.tsv")))
+  }
+  for (mode in c("legacy_point", "simulated_rpf")) {
+    left_out <- run(regions, mode)[reason == "no uORF in the genome"]
+    expect_setequal(left_out$transcript_id, no_room)
+    expect_equal(sum(left_out$reads), sum(uorf_counts[no_room]))
+    expect_true(all(left_out$region == "uorf"))
+  }
+  # Only genes without a uORF: every uORF read is left out.
+  only_no_room <- regions[no_room, ]
+  left_out <- run(only_no_room, "simulated_rpf")[reason == "no uORF in the genome"]
+  expect_equal(sum(left_out$reads), sum(uorf_counts[no_room]))
+})
+
