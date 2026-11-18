@@ -2,7 +2,7 @@
 local_dir <- function() { d <- tempfile('rev_'); dir.create(d); d }
 test_that('short architecture CDS is independent of legacy uORF maximum', {
   expect_silent(suppressMessages(simGenome(n=1, out_dir=local_dir(), architecture='uORF',
-    leader_length=30, cds_length=9, trailer_length=10, export_txdb=FALSE, debug_on=FALSE)))
+    leader_length=50, cds_length=9, trailer_length=10, export_txdb=FALSE, debug_on=FALSE)))
 })
 test_that('fractional feature lengths are rejected instead of truncated', {
   expect_error(gene_architecture('uORF', 12.9), 'length')

@@ -30,7 +30,9 @@
 #'  CDS stop into a "CTE" feature.
 #' @param conditions named list: per condition (as in the count table's
 #'  \code{condition} column) a list of parameters that replace the defaults, or
-#'  \code{p_init_scale}, a factor on all initiation probabilities.
+#'  \code{p_init_scale}, a factor on all initiation probabilities. Default none:
+#'  every condition uses the defaults. Example for an integrated stress response
+#'  condition: \code{list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))}.
 #' @return a list of class "rdg_parameters"
 #' @export
 #' @examples
@@ -41,8 +43,7 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                            reinit_scale_codons = 30, reinit_distance = 50,
                            reinit_after_cds = 0.05, p_frameshift = 0.05,
                            p_readthrough = 0.02,
-                           conditions = list(ISR = list(reinit_distance = 150,
-                                                        p_init_scale = 0.8))) {
+                           conditions = list()) {
   params <- list(p_init = p_init, p_init_other = p_init_other, reinit_max = reinit_max,
                  reinit_scale_codons = reinit_scale_codons,
                  reinit_distance = reinit_distance, reinit_after_cds = reinit_after_cds,
@@ -165,6 +166,9 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
   share <- matrix(NA_real_, nrow(features), ncol(cds_counts),
                   dimnames = list(features$read_group, colnames(cds_counts)))
   by_gene <- split(seq_len(nrow(features)), features$transcript_id)
+  # Only genes in this count table get shares; rows of other genes stay NA and
+  # are dropped by simNGScoverage() together with their ranges.
+  by_gene <- by_gene[names(by_gene) %in% genes]
   for (cond in unique(condition)) {
     p <- rdg_condition_parameters(params, cond)
     libs <- which(condition == cond)
@@ -201,4 +205,11 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
   S4Vectors::metadata(count_table_regions)$rdg_feature_share <- share
   S4Vectors::metadata(count_table_regions)$rdg_parameters <- params
   count_table_regions
+}
+
+# Which translated features (rows of the features table, read_group order) belong
+# to the given transcripts; used in tests and by callers that subset genes.
+features_in_genes <- function(simGenome, genes) {
+  f <- read_features_table(simGenome)[!is.na(read_group)]
+  f$transcript_id %in% genes
 }

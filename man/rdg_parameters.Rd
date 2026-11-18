@@ -13,7 +13,7 @@ rdg_parameters(
   reinit_after_cds = 0.05,
   p_frameshift = 0.05,
   p_readthrough = 0.02,
-  conditions = list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))
+  conditions = list()
 )
 }
 \arguments{
@@ -40,7 +40,9 @@ CDS stop into a "CTE" feature.}
 
 \item{conditions}{named list: per condition (as in the count table's
 \code{condition} column) a list of parameters that replace the defaults, or
-\code{p_init_scale}, a factor on all initiation probabilities.}
+\code{p_init_scale}, a factor on all initiation probabilities. Default none:
+every condition uses the defaults. Example for an integrated stress response
+condition: \code{list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))}.}
 }
 \value{
 a list of class "rdg_parameters"

@@ -44,7 +44,11 @@ Imports:
   stats,
   stringr,
   txdbmaker,
-  utils
+  utils,
+  SummarizedExperiment,
+  S4Vectors,
+  GenomicAlignments,
+  tools
 Suggests:
   testthat
 Config/testthat/edition: 3

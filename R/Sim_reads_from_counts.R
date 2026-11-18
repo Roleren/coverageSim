@@ -297,8 +297,12 @@ simNGScoverage <- function(simGenome,
   cores <- resolve_cores(cores)
   # Translon shares per library from simRDGflow(), unless given explicitly.
   rdg_share <- S4Vectors::metadata(count_table)$rdg_feature_share
-  if (!is.null(rdg_share) && !"uorf_prop_within_gene" %in% supplied)
+  if (!is.null(rdg_share) && !"uorf_prop_within_gene" %in% supplied) {
+    # Libraries may have been subset after simRDGflow(): keep their columns only.
+    if (!is.null(colnames(rdg_share)) && all(colnames(count_table) %in% colnames(rdg_share)))
+      rdg_share <- rdg_share[, colnames(count_table), drop = FALSE]
     uorf_prop_within_gene <- rdg_share
+  }
   input_validation_controller()
 
   # 2. Load the annotation for the requested transcripts.
@@ -534,7 +538,6 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
       read_lengths <- unlist(read_lengths_per[libtype], use.names = FALSE)
       sampling_mode <- get_value(sampling, region, libtype)
       if (is.null(sampling_mode)) sampling_mode <- "MN"
-      if (debug_coverage) browser()
       if (sampling_mode == "DMN") {
         region_length_matrix <- get(paste0("region_length_matrix", region),
                                     envir = env)

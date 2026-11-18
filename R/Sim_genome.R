@@ -94,7 +94,11 @@
 #'   ORF found in the final transcripts is labelled as an incidental decoy. Writes
 #'   \code{true_features.rds} (genomic GRangesList, one element per feature) and
 #'   \code{<genome_name>_features.tsv}; translated uORFs and uoORFs are also written
-#'   to \code{true_uORFs.rds} so the read simulation uses them. Cannot be combined
+#'   to \code{true_uORFs.rds} so the read simulation uses them. All translated
+#'   extra features of any class are read through the single "uorf" region of
+#'   \code{simCountTablesRegions()}: its share (\code{region_proportion$uorf}) is the
+#'   TOTAL for all extra translons of a gene, split between them uniformly, by length,
+#'   or by \code{simRDGflow()}; \code{annotate_ground_truth()} maps reads back to features. Cannot be combined
 #'   with \code{max_uorfs} or \code{n_uorfs}.
 #' @param uorfs_can_overlap = TRUE. Whether two uORFs of the same gene may share
 #'   sequence: TRUE or FALSE.

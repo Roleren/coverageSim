@@ -93,7 +93,7 @@ test_that("impossible architectures stop before any sequence is made", {
                          architecture = gene_architecture(c("uORF", "uORF"), c(30, 30),
                                                           may_overlap = FALSE),
                          debug_on = FALSE),
-               "no room for uORF of 30 nt")
+               "(no room for|does not fit).*uORF|uORF of 30 nt (does not fit|next to)")
   expect_error(simGenome(n = 1, out_dir = dir, max_uorfs = 2, architecture = "uORF",
                          debug_on = FALSE), "not both")
   expect_error(gene_architecture("uORF", 31), "multiples of 3")
@@ -185,4 +185,12 @@ test_that("the C++ and R sequence writers agree for frameshift and readthrough f
   old <- options(coverageSim.engine = "R"); on.exit(options(old))
   set.seed(1); b <- write_feature_sequences(tx, data.table::copy(placed), c(150L, 150L), c(306L, 306L), stops)
   expect_identical(a$tx_seqs, b$tx_seqs)
+})
+
+test_that("uORFs keep a margin from the transcript 5' end so their first codon can get reads", {
+  arch <- architecture_per_gene(rep(list(architecture_preset("ATF4_like")), 20), 20L,
+                                paste0("t", 1:20))
+  set.seed(3)
+  placed <- place_features(arch, rep(150L, 20), rep(306L, 20), rep(150L, 20))
+  expect_true(all(placed[class %in% c("uORF", "uoORF")]$tx_start >= edge_margin))
 })

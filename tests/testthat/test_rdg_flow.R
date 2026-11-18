@@ -82,3 +82,28 @@ test_that("frameshift and readthrough loads come from CDS ribosomes", {
   # Shifted ribosomes leave the CDS frame at the shift site.
   expect_equal(x$cds_load, 0.5 * 900 - 0.15 * (1000 - 301 + 1))
 })
+
+test_that("simRDGflow and simNGScoverage work on gene and library subsets", {
+  set.seed(8)
+  n <- 6
+  dir <- tempfile("rdg_subset_"); dir.create(dir)
+  genome <- suppressMessages(simGenome(n = n, out_dir = dir, architecture = "uORF",
+    leader_length = rep(150, n), cds_length = rep(300, n), trailer_length = rep(150, n),
+    debug_on = FALSE))
+  counts <- suppressMessages(simCountTables(ORFik::loadRegion(genome["txdb"], "cds"),
+    libtypes = "RFP", conditions = c("WT", "ISR"), replicates = 1, plot_PCA = FALSE,
+    print_statistics = FALSE))
+  SummarizedExperiment::assay(counts)[] <- 2000
+  regions <- suppressMessages(simCountTablesRegions(counts))
+  sub_genes <- simRDGflow(regions[1:4, ], genome)
+  share <- S4Vectors::metadata(sub_genes)$rdg_feature_share
+  expect_true(all(is.na(share[!features_in_genes(genome, rownames(regions)[1:4]), ])))
+  flowed <- simRDGflow(regions, genome)
+  expect_no_error(suppressMessages(simNGScoverage(genome, flowed[, 1], out_dir = dir,
+    exp_save_dir = dir, fragment_mode = "legacy_point", libFormats = list(RFP = "ofst"),
+    validate = FALSE)))
+})
+
+test_that("the default parameters treat every condition alike", {
+  expect_length(rdg_parameters()$conditions, 0)
+})

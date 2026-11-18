@@ -160,10 +160,15 @@ architecture_per_gene <- function(architecture, n, tx_names) {
 # base of the start codon), given leader length L and CDS end C (last base of the
 # CDS stop codon) and transcript length Tn. Out-of-frame classes keep their
 # start and stop codons off the CDS start and stop codons.
+# Features starting in the leader keep a margin from the transcript 5' end, so a
+# footprint (P-site offset ~12-13 nt) of their first codon fits inside the
+# transcript; without it such a feature could get no reads at all.
+edge_margin <- 16L
+
 feature_start_window <- function(class, len, L, C, Tn) {
   switch(class,
-    uORF   = c(1L, L - len + 1L),
-    uoORF  = c(max(1L, L + 7L - len), min(L - 2L, C - 2L - len)),
+    uORF   = c(edge_margin, L - len + 1L),
+    uoORF  = c(max(edge_margin, L + 7L - len), min(L - 2L, C - 2L - len)),
     NTE    = if (len <= L) rep(L + 1L - len, 2L) else c(1L, 0L),
     intORF = c(L + 4L, C - 2L - len),
     doORF  = c(L + 4L, min(C - 5L, Tn - len + 1L), C - len + 2L),
@@ -501,7 +506,7 @@ export_architecture_features <- function(features, leader_ranges, exon_cds_range
     out <- c(out, uorfs = file.path(out_dir, "true_uORFs.rds"))
     saveRDS(uorf_ranges, out[["uorfs"]])
   }
-  data.table::fwrite(features, out[["features_table"]], sep = "\t")
+  data.table::fwrite(features, out[["features_table"]], sep = "\t", na = "NA")
   out
 }
 
