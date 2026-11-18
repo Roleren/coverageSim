@@ -314,13 +314,18 @@ simNGScoverage <- function(simGenome,
     assign(object, ranges[index], envir = environment())
   }
   if ("uorf" %in% regionsToSample) {
-    keep <- txNames(uorf_ranges) %in% transcripts
+    keep <- if (length(uorf_ranges)) txNames(uorf_ranges) %in% transcripts else logical(0)
     uorf_ranges <- uorf_ranges[keep]
     if (uorf_prop_mode == "numeric") uorf_prop_within_gene <- uorf_prop_within_gene[keep]
     # None of the requested genes has a uORF: their uORF reads are left out
     # and reported per sample, so there is nothing to tile.
     if (!length(uorf_ranges)) regionsToSample <- setdiff(regionsToSample, "uorf")
   }
+  # Chromosome of every transcript, in count-table order. Taken from the whole
+  # transcript, not the CDS, so region sets without a CDS (e.g. leader only) work.
+  tx_ranges_all <- loadRegion(txdb, "mrna", names.keep = transcripts)
+  tx_seqnames <- seqnamesPerGroup(
+    tx_ranges_all[match(rownames(count_table), names(tx_ranges_all))], keep.names = FALSE)
   if ("cds" %in% regionsToSample) {
     if (any((widthPerGroup(cds_ranges, FALSE) %% 3) != 0)) {
       warning("Detected CDS ranges that ends on incomplete codon (is not %% 3 == 0 in length")
@@ -336,7 +341,7 @@ simNGScoverage <- function(simGenome,
     assay <- assay + assay(count_table, i)
   }
   assay_by_chromosome <- assay_by_chromo(assay,
-                seqnamesPerGroup(cds_ranges, keep.names = FALSE))
+                tx_seqnames)
 
   colnames <- colnames(assay)
   libtypes <- as.character(colData(count_table)$libtype)
@@ -376,7 +381,7 @@ simNGScoverage <- function(simGenome,
     )
     if (nrow(no_uorf)) {
       left_out <- data.table::data.table(
-        seqnames = seqnamesPerGroup(cds_ranges, keep.names = FALSE)[no_uorf$row],
+        seqnames = tx_seqnames[no_uorf$row],
         reads = no_uorf$reads
       )[, .(reads = sum(reads)), by = seqnames]
       expected_counts[left_out, expected := expected - i.reads, on = "seqnames"]
@@ -670,7 +675,7 @@ uorf_reads_without_uorf <- function(count_table_sample, uorf_ranges) {
   if (!"uorf" %in% assayNames(count_table_sample)) return(empty)
   counts <- as.vector(assay(count_table_sample, "uorf"))
   ids <- rownames(count_table_sample)
-  with_uorf <- if (is.null(uorf_ranges)) character(0) else txNames(uorf_ranges)
+  with_uorf <- if (!length(uorf_ranges)) character(0) else txNames(uorf_ranges)
   missing <- which(counts > 0 & !ids %in% with_uorf)
   if (!length(missing)) return(empty)
   data.table::data.table(sampling_group = "uorf:no_uorf", transcript_id = ids[missing],

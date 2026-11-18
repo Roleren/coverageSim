@@ -412,7 +412,16 @@ input_validation_controller <- function() {
 
     if ("uorf" %in% regionsToSample) {
       if (is.character(true_uorf_ranges)) {
-        uorf_ranges <- readRDS(file.path(dirname(simGenome["genome"]), "true_uORFs.rds"))
+        uorf_file <- if (!is.na(simGenome["uorfs"])) simGenome["uorfs"] else
+          file.path(dirname(simGenome["genome"]), "true_uORFs.rds")
+        # A genome made with max_uorfs = 0 has no uORF file: then there are no
+        # uORFs, and any uORF reads in the count table are left out and listed
+        # (uorf_reads_without_uorf()), as for genes whose leader had no room.
+        uorf_ranges <- if (file.exists(uorf_file)) readRDS(uorf_file) else {
+          message("No uORF annotation for this genome (", basename(uorf_file),
+                  " not found): uORF reads are left out")
+          GenomicRanges::GRangesList()
+        }
       } else {
         uorf_ranges <- true_uorf_ranges
       }

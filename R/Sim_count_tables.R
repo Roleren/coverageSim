@@ -237,6 +237,28 @@ simCountTablesRegions <- function(count_table = simCountTables(),
   prop_mat <- t(matrix(unlist(region_proportion), ncol = length(region_proportion),
                        dimnames = list(names(region_proportion[[1]]), names(region_proportion))))
   stopifnot(all(colSums(prop_mat) == 1))
+  # Only the regions asked for receive reads. Their proportions are rescaled to
+  # sum to 1, so a gene's whole count is distributed over them; sampling all
+  # regions and keeping a subset would silently lose the reads of the others.
+  missing_regions <- setdiff(regionsToSample, rownames(prop_mat))
+  if (length(missing_regions)) {
+    stop("regionsToSample contains regions without a region_proportion: ",
+         paste(missing_regions, collapse = ", "), call. = FALSE)
+  }
+  prop_mat <- prop_mat[regionsToSample, , drop = FALSE]
+  selected_sums <- colSums(prop_mat)
+  libtypes_used <- unique(as.character(colData(count_table)$libtype))
+  empty_libtypes <- intersect(libtypes_used, names(selected_sums)[selected_sums == 0])
+  if (length(empty_libtypes)) {
+    stop("regionsToSample (", paste(regionsToSample, collapse = ", "), ") have ",
+         "proportion 0 for library type(s) ", paste(empty_libtypes, collapse = ", "),
+         ": their reads would have nowhere to go", call. = FALSE)
+  }
+  if (any(abs(selected_sums[libtypes_used] - 1) > 1e-12)) {
+    message("Region proportions rescaled to the selected regions (",
+            paste(regionsToSample, collapse = ", "), ")")
+  }
+  prop_mat <- sweep(prop_mat, 2, ifelse(selected_sums > 0, selected_sums, 1), "/")
 
   assay <- assay(count_table)
   colnames <- colnames(assay)
@@ -253,7 +275,7 @@ simCountTablesRegions <- function(count_table = simCountTables(),
       dt <- t(as.data.table(lapply(assay[,s], function(x)
         sample_region_counts_dmn(x, prop_mat[,libtype], region_dmn_concentration))))
     }
-    colnames(dt) <- names(region_proportion)
+    colnames(dt) <- rownames(prop_mat)
     mat <-cbind(mat, dt)
 
   }
