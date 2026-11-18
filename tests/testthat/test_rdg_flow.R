@@ -70,3 +70,15 @@ test_that("simRDGflow keeps each gene's reads and the read simulation follows it
   # Translons with a larger share get more reads.
   expect_gt(cor(reads$reads, expected), 0.5)
 })
+
+test_that("frameshift and readthrough loads come from CDS ribosomes", {
+  p <- flat(p_init = c(ATG = 0.5), p_readthrough = 0.1, p_frameshift = 0.2)
+  x <- rdg_gene_loads(starts = c(1001L, 301L), ends = c(1060L, 450L), classes = c("CTE", "FS"),
+                      start_codons = c(NA, NA), L = 100L, C = 1000L, params = p,
+                      efficiency = c(NA, 0.3))
+  expect_equal(x$cds_initiations, 0.5)
+  expect_equal(x$initiations, c(0.5 * 0.1, 0.5 * 0.3))
+  expect_equal(x$load, c(0.05 * 60, 0.15 * 150))
+  # Shifted ribosomes leave the CDS frame at the shift site.
+  expect_equal(x$cds_load, 0.5 * 900 - 0.15 * (1000 - 301 + 1))
+})

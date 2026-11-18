@@ -11,8 +11,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // write_feature_sequences_cpp
-Rcpp::List write_feature_sequences_cpp(Rcpp::CharacterVector tx, Rcpp::IntegerVector leader, Rcpp::IntegerVector cds_length, Rcpp::IntegerVector gene, Rcpp::IntegerVector start, Rcpp::IntegerVector end, Rcpp::CharacterVector classes, Rcpp::CharacterVector starts, Rcpp::CharacterVector chosen_stops, Rcpp::CharacterVector stop_codons, int max_rounds);
-RcppExport SEXP _coverageSim_write_feature_sequences_cpp(SEXP txSEXP, SEXP leaderSEXP, SEXP cds_lengthSEXP, SEXP geneSEXP, SEXP startSEXP, SEXP endSEXP, SEXP classesSEXP, SEXP startsSEXP, SEXP chosen_stopsSEXP, SEXP stop_codonsSEXP, SEXP max_roundsSEXP) {
+Rcpp::List write_feature_sequences_cpp(Rcpp::CharacterVector tx, Rcpp::IntegerVector leader, Rcpp::IntegerVector cds_length, Rcpp::IntegerVector gene, Rcpp::IntegerVector start, Rcpp::IntegerVector end, Rcpp::CharacterVector classes, Rcpp::CharacterVector starts, Rcpp::LogicalVector has_start, Rcpp::CharacterVector chosen_stops, Rcpp::CharacterVector stop_codons, int max_rounds);
+RcppExport SEXP _coverageSim_write_feature_sequences_cpp(SEXP txSEXP, SEXP leaderSEXP, SEXP cds_lengthSEXP, SEXP geneSEXP, SEXP startSEXP, SEXP endSEXP, SEXP classesSEXP, SEXP startsSEXP, SEXP has_startSEXP, SEXP chosen_stopsSEXP, SEXP stop_codonsSEXP, SEXP max_roundsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -24,10 +24,11 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type end(endSEXP);
     Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type classes(classesSEXP);
     Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type starts(startsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::LogicalVector >::type has_start(has_startSEXP);
     Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type chosen_stops(chosen_stopsSEXP);
     Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type stop_codons(stop_codonsSEXP);
     Rcpp::traits::input_parameter< int >::type max_rounds(max_roundsSEXP);
-    rcpp_result_gen = Rcpp::wrap(write_feature_sequences_cpp(tx, leader, cds_length, gene, start, end, classes, starts, chosen_stops, stop_codons, max_rounds));
+    rcpp_result_gen = Rcpp::wrap(write_feature_sequences_cpp(tx, leader, cds_length, gene, start, end, classes, starts, has_start, chosen_stops, stop_codons, max_rounds));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -46,7 +47,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 11},
+    {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 12},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}
 };

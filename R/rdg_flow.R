@@ -24,6 +24,10 @@
 #' @param reinit_distance nt after a stop codon before reinitiating ribosomes
 #'  can initiate again (ternary complex re-acquisition).
 #' @param reinit_after_cds reinitiation probability after the CDS stop.
+#' @param p_frameshift default fraction of CDS ribosomes that shift frame at an
+#'  "FS" feature (a feature's own \code{efficiency} overrides it).
+#' @param p_readthrough default fraction of CDS ribosomes that read through the
+#'  CDS stop into a "CTE" feature.
 #' @param conditions named list: per condition (as in the count table's
 #'  \code{condition} column) a list of parameters that replace the defaults, or
 #'  \code{p_init_scale}, a factor on all initiation probabilities.
@@ -35,14 +39,16 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                                       ACG = 0.04),
                            p_init_other = 0.02, reinit_max = 0.6,
                            reinit_scale_codons = 30, reinit_distance = 50,
-                           reinit_after_cds = 0.05,
+                           reinit_after_cds = 0.05, p_frameshift = 0.05,
+                           p_readthrough = 0.02,
                            conditions = list(ISR = list(reinit_distance = 150,
                                                         p_init_scale = 0.8))) {
   params <- list(p_init = p_init, p_init_other = p_init_other, reinit_max = reinit_max,
                  reinit_scale_codons = reinit_scale_codons,
                  reinit_distance = reinit_distance, reinit_after_cds = reinit_after_cds,
+                 p_frameshift = p_frameshift, p_readthrough = p_readthrough,
                  p_init_scale = 1, conditions = conditions)
-  probs <- c(p_init, p_init_other, reinit_max, reinit_after_cds)
+  probs <- c(p_init, p_init_other, reinit_max, reinit_after_cds, p_frameshift, p_readthrough)
   if (any(!is.finite(probs) | probs < 0 | probs > 1))
     stop("Probabilities in rdg_parameters must be within [0, 1]")
   if (reinit_scale_codons <= 0 || reinit_distance < 0)
@@ -62,7 +68,27 @@ rdg_condition_parameters <- function(params, condition) {
 # starts/ends/classes/start_codons describe the translated extra features
 # (transcript coordinates); L = leader length, C = CDS end (last stop base).
 rdg_gene_loads <- function(starts, ends, classes, start_codons, L, C, params,
-                           cds_start_codon = "ATG") {
+                           cds_start_codon = "ATG", efficiency = NULL) {
+  # Frameshift segments and readthrough extensions are fed by ribosomes that
+  # elongate the CDS, not by scanning: handled after the scanning pass.
+  continued <- classes %in% c("FS", "CTE")
+  if (any(continued)) {
+    inner <- rdg_gene_loads(starts[!continued], ends[!continued], classes[!continued],
+                            start_codons[!continued], L, C, params, cds_start_codon)
+    eff <- if (is.null(efficiency)) rep(NA_real_, length(starts)) else efficiency
+    default <- ifelse(classes == "FS", params$p_frameshift, params$p_readthrough)
+    eff <- ifelse(is.na(eff), default, eff)
+    initiations <- load <- numeric(length(starts))
+    initiations[!continued] <- inner$initiations
+    load[!continued] <- inner$load
+    initiations[continued] <- inner$cds_initiations * eff[continued]
+    load[continued] <- initiations[continued] * (ends[continued] - starts[continued] + 1L)
+    # Ribosomes that shift frame leave the CDS frame at the shift site.
+    fs <- classes == "FS"
+    cds_load <- inner$cds_load - sum(initiations[fs] * pmax(0, C - starts[fs] + 1L))
+    return(list(initiations = initiations, load = load,
+                cds_initiations = inner$cds_initiations, cds_load = max(cds_load, 0)))
+  }
   ids <- c("CDS", seq_along(starts))
   s <- c(L + 1L, starts)
   e <- c(C, ends)
@@ -145,7 +171,8 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
     gene_load <- lapply(names(by_gene), function(g) {
       rows <- by_gene[[g]]
       rdg_gene_loads(features$tx_start[rows], features$tx_end[rows], features$class[rows],
-                     features$start_codon[rows], L[[g]], C[[g]], p, cds_codon[[g]])
+                     features$start_codon[rows], L[[g]], C[[g]], p, cds_codon[[g]],
+                     efficiency = if ("efficiency" %in% names(features)) features$efficiency[rows])
     })
     names(gene_load) <- names(by_gene)
     for (g in names(by_gene)) {

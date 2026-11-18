@@ -17,7 +17,9 @@
 #   4. label: every other ORF found in the transcripts is a decoy, classified
 #      with the same rules, so ORF callers can be scored for false positives.
 
-feature_classes <- c("uORF", "uoORF", "NTE", "intORF", "doORF", "dORF")
+feature_classes <- c("uORF", "uoORF", "NTE", "intORF", "doORF", "dORF", "FS", "CTE")
+# Classes continued by ribosomes already elongating the CDS: no start codon of their own.
+no_start_classes <- c("FS", "CTE")
 
 #' Describe the extra translons of a gene
 #'
@@ -27,13 +29,19 @@ feature_classes <- c("uORF", "uoORF", "NTE", "intORF", "doORF", "dORF")
 #'  (start in the leader, stop inside the CDS, other frame), "NTE" (in-frame
 #'  upstream start in the leader, ends at the CDS stop), "intORF" (start and stop
 #'  inside the CDS, other frame), "doORF" (start inside the CDS, other frame,
-#'  stop in the trailer) or "dORF" (start and stop in the trailer).
+#'  stop in the trailer), "dORF" (start and stop in the trailer), "FS" (a
+#'  programmed frameshift: from a shift site inside the CDS, ribosomes continue in
+#'  frame 1 (+1) or 2 (-1) to that frame's stop; length from the shift site) or
+#'  "CTE" (stop codon readthrough: the in-frame extension after the CDS stop to the
+#'  next stop; length of the extension). FS and CTE have no start codon.
 #' @param length length in nt including start and stop codon, a multiple of 3.
 #'  For "NTE" it is the length of the extension (nt upstream of the CDS start).
 #' @param start_codon start codon of the feature, e.g. "ATG", "CTG".
 #' @param status "translated" (gets reads) or "decoy" (built, but no reads).
 #' @param frame for out-of-frame classes, 1 or 2 nt after the CDS frame, or NA
 #'  for either.
+#' @param efficiency for FS and CTE: the fraction of CDS ribosomes that shift
+#'  frame or read through (NA = the defaults of \code{rdg_parameters()}).
 #' @param may_overlap FALSE keeps this feature from overlapping any other extra
 #'  feature of the gene (the main CDS is not counted).
 #' @return a data.table, one row per feature
@@ -42,7 +50,7 @@ feature_classes <- c("uORF", "uoORF", "NTE", "intORF", "doORF", "dORF")
 #' gene_architecture(c("uORF", "uoORF"), length = c(30, 90))
 gene_architecture <- function(class, length, start_codon = "ATG",
                               status = "translated", frame = NA_integer_,
-                              may_overlap = TRUE) {
+                              may_overlap = TRUE, efficiency = NA_real_) {
   if (!is.numeric(length) || anyNA(length) || any(length != floor(length)))
     stop("Feature lengths must be whole numbers")
   n <- max(lengths(list(class, length)))
@@ -51,14 +59,21 @@ gene_architecture <- function(class, length, start_codon = "ATG",
                                  start_codon = rep_len(toupper(start_codon), n),
                                  status = rep_len(status, n),
                                  frame = rep_len(as.integer(frame), n),
-                                 may_overlap = rep_len(as.logical(may_overlap), n))
+                                 may_overlap = rep_len(as.logical(may_overlap), n),
+                                 efficiency = rep_len(as.numeric(efficiency), n))
+  arch[class %in% no_start_classes, start_codon := NA_character_]
   bad <- setdiff(arch$class, feature_classes)
   if (length(bad)) stop("Unknown feature class: ", paste(bad, collapse = ", "),
                         "; use one of ", paste(feature_classes, collapse = ", "))
   if (any(!arch$status %in% c("translated", "decoy")))
     stop("status must be 'translated' or 'decoy'")
-  if (any(nchar(arch$start_codon) != 3 | grepl("[^ACGT]", arch$start_codon)))
+  with_start <- !arch$class %in% no_start_classes
+  if (any(nchar(arch$start_codon[with_start]) != 3 | grepl("[^ACGT]", arch$start_codon[with_start])))
     stop("start_codon must be 3 letters of A, C, G, T")
+  if (any(!is.na(arch$efficiency) & (arch$efficiency < 0 | arch$efficiency > 1)))
+    stop("efficiency must be within [0, 1]")
+  if (any(arch$class == "FS" & is.na(arch$frame)))
+    arch[class == "FS" & is.na(frame), frame := 1L]
   if (any(arch$start_codon %in% c("TAA", "TAG", "TGA")))
     stop("start_codon cannot be a stop codon")
   if (any(!is.na(arch$frame) & !arch$frame %in% 1:2))
@@ -76,7 +91,9 @@ gene_architecture <- function(class, length, start_codon = "ATG",
 #' @param name one of "uORF", "two_uORFs", "uoORF", "ATF4_like" (short uORF,
 #'  then a uoORF across the CDS start), "NTE_CUG" (near-cognate in-frame
 #'  extension), "intORF", "doORF", "dORF", "uORF_decoy" (a translated uORF
-#'  plus an untranslated decoy uORF), "all" (one of each class).
+#'  plus an untranslated decoy uORF), "all" (one of each start-codon class),
+#'  "frameshift_plus1" (OAZ1-like +1 frameshift, 30\% efficient),
+#'  "frameshift_minus1" (-1 frameshift, 10\%), "readthrough" (60 nt extension, 5\%).
 #' @return a data.table from \code{\link{gene_architecture}}
 #' @export
 architecture_preset <- function(name) {
@@ -93,6 +110,9 @@ architecture_preset <- function(name) {
                                    status = c("translated", "decoy"), may_overlap = FALSE),
     all = gene_architecture(c("uORF", "uoORF", "intORF", "doORF", "dORF"),
                             c(24, 90, 60, 60, 45)),
+    frameshift_plus1 = gene_architecture("FS", 150, frame = 1L, efficiency = 0.3),
+    frameshift_minus1 = gene_architecture("FS", 150, frame = 2L, efficiency = 0.1),
+    readthrough = gene_architecture("CTE", 60, efficiency = 0.05),
     stop("Unknown preset '", name, "'"))
 }
 
@@ -106,7 +126,7 @@ revalidate_architecture <- function(a) {
   get <- function(col, default) if (col %in% names(a)) a[[col]] else default
   gene_architecture(a$class, a$length, start_codon = get("start_codon", "ATG"),
                     status = get("status", "translated"), frame = get("frame", NA_integer_),
-                    may_overlap = get("may_overlap", TRUE))
+                    may_overlap = get("may_overlap", TRUE), efficiency = get("efficiency", NA_real_))
 }
 
 # Recycle the architecture argument of simGenome to one table per gene.
@@ -147,7 +167,9 @@ feature_start_window <- function(class, len, L, C, Tn) {
     NTE    = if (len <= L) rep(L + 1L - len, 2L) else c(1L, 0L),
     intORF = c(L + 4L, C - 2L - len),
     doORF  = c(L + 4L, min(C - 5L, Tn - len + 1L), C - len + 2L),
-    dORF   = c(C + 1L, Tn - len + 1L))
+    dORF   = c(C + 1L, Tn - len + 1L),
+    CTE    = if (C + len <= Tn) rep(C + 1L, 2L) else c(1L, 0L),
+    FS     = c(L + 4L, min(C - 5L, Tn - len + 1L)))
 }
 
 # Frame of a start position relative to the CDS (0 = in frame).
@@ -170,7 +192,7 @@ place_gene_features <- function(class, len, start_codon, want_frame, may_overlap
     w <- feature_start_window(cl, len[r], L, C, Tn)
     cand <- if (w[1] <= w[2]) seq.int(w[1], w[2]) else integer()
     if (cl == "doORF") cand <- cand[cand >= w[3]] # stop must reach the trailer
-    if (cl %in% c("uoORF", "intORF", "doORF")) {
+    if (cl %in% c("uoORF", "intORF", "doORF", "FS")) {
       f <- cds_frame(cand, L)
       cand <- cand[f != 0L & (is.na(want_frame[r]) | f == want_frame[r])]
     }
@@ -186,7 +208,7 @@ place_gene_features <- function(class, len, start_codon, want_frame, may_overlap
     for (try in seq_len(min(max_tries, length(cand) * 3L))) {
       s <- cand[sample.int(length(cand), 1L)]
       e <- if (is_nte) C else s + len[r] - 1L
-      codons <- if (is_nte) s + 0:2 else c(s + 0:2, e - 2:0)
+      codons <- if (is_nte) s + 0:2 else if (cl %in% no_start_classes) e - 2:0 else c(s + 0:2, e - 2:0)
       if (any(codons %in% fixed)) next
       fr <- cds_frame(s, L)
       ov <- ps <= e & pe >= s
@@ -268,7 +290,8 @@ write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_leng
     if (nrow(arch)) arch[, stop_codon := stops]
     result <- write_feature_sequences_cpp(tx_seqs, as.integer(leader_length),
       as.integer(cds_total_length), as.integer(arch$gene), as.integer(arch$tx_start),
-      as.integer(arch$tx_end), arch$class, arch$start_codon, stops,
+      as.integer(arch$tx_end), arch$class, arch$start_codon,
+      !arch$class %in% no_start_classes, stops,
       stop_codons, as.integer(max_rounds))
     return(list(tx_seqs = result$tx_seqs, arch = arch, rounds = result$rounds))
   }
@@ -286,15 +309,17 @@ write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_leng
     stops <- ifelse(arch$class == "NTE", NA_character_,
                     sample(stop_codons, nrow(arch), replace = TRUE))
     arch[, stop_codon := stops]
+    has_start <- !arch$class %in% no_start_classes
     for (k in 0:2) {
-      bases[g_s + k] <- substr(arch$start_codon, k + 1L, k + 1L)
-      fixed[g_s + k] <- TRUE
+      bases[g_s[has_start] + k] <- substr(arch$start_codon[has_start], k + 1L, k + 1L)
+      fixed[g_s[has_start] + k] <- TRUE
       orf <- arch$class != "NTE"
       bases[g_e[orf] - 2L + k] <- substr(stops[orf], k + 1L, k + 1L)
       fixed[g_e[orf] - 2L + k] <- TRUE
     }
   } else g_s <- g_e <- integer()
-  codon_pos <- internal_codon_starts(c(cds_s, g_s), c(cds_e, g_e))
+  first <- if (length(g_s)) g_s - ifelse(arch$class %in% no_start_classes, 3L, 0L) else g_s
+  codon_pos <- internal_codon_starts(c(cds_s, first), c(cds_e, g_e))
   codon_pos <- unique(codon_pos)
   for (round in seq_len(max_rounds)) {
     bad <- feature_stop_positions(bases, codon_pos, stop_codons)
@@ -314,13 +339,16 @@ write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_leng
 verify_features <- function(tx_seqs, arch, stop_codons, cds_end) {
   if (!nrow(arch)) return(arch)
   seq_of <- substring(tx_seqs[arch$gene], arch$tx_start, arch$tx_end)
-  start_ok <- substr(seq_of, 1, 3) == arch$start_codon
+  no_start <- arch$class %in% no_start_classes
+  start_ok <- no_start | substr(seq_of, 1, 3) == arch$start_codon
   stop_ok <- substring(seq_of, nchar(seq_of) - 2L, nchar(seq_of)) %in% stop_codons
   internal_ok <- vapply(seq_along(seq_of), function(i) {
     x <- seq_of[i]; n <- nchar(x) %/% 3L
-    if (n <= 2L) return(TRUE)
-    !any(substring(x, seq(4L, by = 3L, length.out = n - 2L),
-                   seq(6L, by = 3L, length.out = n - 2L)) %in% stop_codons)
+    first <- if (no_start[i]) 1L else 4L
+    k <- n - 1L - (first == 4L)
+    if (k <= 0L) return(TRUE)
+    !any(substring(x, seq(first, by = 3L, length.out = k),
+                   seq(first + 2L, by = 3L, length.out = k)) %in% stop_codons)
   }, logical(1))
   in_frame <- (arch$tx_end - arch$tx_start + 1L) %% 3L == 0L
   arch[, verified := start_ok & stop_ok & internal_ok & in_frame &
@@ -370,7 +398,7 @@ label_decoy_orfs <- function(tx_seqs, arch, tx_names, leader_length, cds_total_l
   dt[, `:=`(transcript_id = tx_names[gene],
             start_codon = substr(tx_seqs[gene], tx_start, tx_start + 2L),
             frame = cds_frame(tx_start, leader_length[gene]),
-            status = "decoy", origin = "incidental")]
+            status = "decoy", origin = "incidental", efficiency = NA_real_)]
   dt[, feature_id := paste0(transcript_id, "_decoy_", seq_len(.N)), by = gene]
   # A decoy that ends at the stop of a built feature or the CDS is a nested
   # in-frame truncation of it, not an independent ORF.
@@ -439,10 +467,10 @@ build_architectures <- function(arch, leader_string, cds_string, trailer_string,
     arch[, `:=`(origin = "requested")]
   }
   decoys <- label_decoy_orfs(tx, arch, tx_names, L, Lc,
-                             unique(c(start_codons, arch$start_codon)), stop_codons)
+                             unique(stats::na.omit(c(start_codons, arch$start_codon))), stop_codons)
   if (nrow(arch)) arch[, nested_in := NA_character_]
   cols <- c("feature_id", "transcript_id", "gene", "class", "status", "origin",
-            "tx_start", "tx_end", "frame", "start_codon", "nested_in")
+            "tx_start", "tx_end", "frame", "start_codon", "nested_in", "efficiency")
   features <- data.table::rbindlist(list(
     if (nrow(arch)) arch[, ..cols], if (nrow(decoys)) decoys[, ..cols]), fill = TRUE)
   list(leader_string = Biostrings::DNAStringSet(substr(tx, 1L, L)),

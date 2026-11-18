@@ -11,6 +11,8 @@ rdg_parameters(
   reinit_scale_codons = 30,
   reinit_distance = 50,
   reinit_after_cds = 0.05,
+  p_frameshift = 0.05,
+  p_readthrough = 0.02,
   conditions = list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))
 )
 }
@@ -29,6 +31,12 @@ ribosome (named numeric); codons not listed use \code{p_init_other}.}
 can initiate again (ternary complex re-acquisition).}
 
 \item{reinit_after_cds}{reinitiation probability after the CDS stop.}
+
+\item{p_frameshift}{default fraction of CDS ribosomes that shift frame at an
+"FS" feature (a feature's own \code{efficiency} overrides it).}
+
+\item{p_readthrough}{default fraction of CDS ribosomes that read through the
+CDS stop into a "CTE" feature.}
 
 \item{conditions}{named list: per condition (as in the count table's
 \code{condition} column) a list of parameters that replace the defaults, or

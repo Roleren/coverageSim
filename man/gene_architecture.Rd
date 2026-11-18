@@ -10,7 +10,8 @@ gene_architecture(
   start_codon = "ATG",
   status = "translated",
   frame = NA_integer_,
-  may_overlap = TRUE
+  may_overlap = TRUE,
+  efficiency = NA_real_
 )
 }
 \arguments{
@@ -18,7 +19,11 @@ gene_architecture(
 (start in the leader, stop inside the CDS, other frame), "NTE" (in-frame
 upstream start in the leader, ends at the CDS stop), "intORF" (start and stop
 inside the CDS, other frame), "doORF" (start inside the CDS, other frame,
-stop in the trailer) or "dORF" (start and stop in the trailer).}
+stop in the trailer), "dORF" (start and stop in the trailer), "FS" (a
+programmed frameshift: from a shift site inside the CDS, ribosomes continue in
+frame 1 (+1) or 2 (-1) to that frame's stop; length from the shift site) or
+"CTE" (stop codon readthrough: the in-frame extension after the CDS stop to the
+next stop; length of the extension). FS and CTE have no start codon.}
 
 \item{length}{length in nt including start and stop codon, a multiple of 3.
 For "NTE" it is the length of the extension (nt upstream of the CDS start).}
@@ -32,6 +37,9 @@ for either.}
 
 \item{may_overlap}{FALSE keeps this feature from overlapping any other extra
 feature of the gene (the main CDS is not counted).}
+
+\item{efficiency}{for FS and CTE: the fraction of CDS ribosomes that shift
+frame or read through (NA = the defaults of \code{rdg_parameters()}).}
 }
 \value{
 a data.table, one row per feature

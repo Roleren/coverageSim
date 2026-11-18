@@ -144,3 +144,45 @@ test_that("every translated feature class gets reads in its own frame, traceable
   table <- data.table::fread(genome[["features_table"]])
   expect_false(any(features$feature_id %in% table[status == "decoy", feature_id]))
 })
+
+test_that("frameshift segments and readthrough extensions are built in their own frames", {
+  arch <- list(architecture_preset("frameshift_plus1"), architecture_preset("frameshift_minus1"),
+               architecture_preset("readthrough"), architecture_preset("readthrough"))
+  genome <- build_genome(arch, n = 4, seed = 3, cds_exons = 2)
+  features <- read_features_table(genome)
+  req <- features[origin == "requested"]
+  expect_equal(req$class, c("FS", "FS", "CTE", "CTE"))
+  expect_true(all(is.na(req$start_codon)))
+  expect_equal(req$frame, c(1L, 2L, 0L, 0L))
+  seqs <- feature_seqs(genome)[features$origin == "requested"]
+  # Stop-free from the first codon, ending in a stop.
+  first_codon_stop <- vapply(seqs, function(z) {
+    n <- nchar(z) %/% 3L
+    any(substring(z, seq(1L, by = 3L, length.out = n - 1L),
+                  seq(3L, by = 3L, length.out = n - 1L)) %in% stops)
+  }, logical(1))
+  expect_false(any(first_codon_stop))
+  expect_true(all(substring(seqs, nchar(seqs) - 2L) %in% stops))
+  # Readthrough starts right after the CDS stop, which stays a stop.
+  cte <- req[class == "CTE"]
+  cds_end <- 150L + 306L
+  expect_true(all(cte$tx_start == cds_end + 1L))
+  fa <- Rsamtools::FaFile(genome[["genome"]])
+  cds <- as.character(ORFik::txSeqsFromFa(
+    ORFik::loadRegion(ORFik::loadTxdb(genome[["txdb"]]), "cds"), fa, is.sorted = TRUE))
+  expect_true(all(substring(cds, nchar(cds) - 2L) %in% stops))
+  expect_false(any(has_internal_stop(cds)))
+})
+
+test_that("the C++ and R sequence writers agree for frameshift and readthrough features", {
+  arch <- architecture_per_gene(list(architecture_preset("frameshift_plus1"),
+                                     architecture_preset("readthrough")), 2L, c("a", "b"))
+  set.seed(9)
+  placed <- place_features(arch, c(150L, 150L), c(306L, 306L), c(150L, 150L))
+  tx <- vapply(1:2, function(i) paste(sample(c("A", "C", "G", "T"), 606, TRUE), collapse = ""), "")
+  substr(tx, 151, 153) <- "ATG"; substr(tx, 454, 456) <- "TAA"
+  set.seed(1); a <- write_feature_sequences(tx, data.table::copy(placed), c(150L, 150L), c(306L, 306L), stops)
+  old <- options(coverageSim.engine = "R"); on.exit(options(old))
+  set.seed(1); b <- write_feature_sequences(tx, data.table::copy(placed), c(150L, 150L), c(306L, 306L), stops)
+  expect_identical(a$tx_seqs, b$tx_seqs)
+})

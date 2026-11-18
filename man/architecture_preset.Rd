@@ -10,7 +10,9 @@ architecture_preset(name)
 \item{name}{one of "uORF", "two_uORFs", "uoORF", "ATF4_like" (short uORF,
 then a uoORF across the CDS start), "NTE_CUG" (near-cognate in-frame
 extension), "intORF", "doORF", "dORF", "uORF_decoy" (a translated uORF
-plus an untranslated decoy uORF), "all" (one of each class).}
+plus an untranslated decoy uORF), "all" (one of each start-codon class),
+"frameshift_plus1" (OAZ1-like +1 frameshift, 30\% efficient),
+"frameshift_minus1" (-1 frameshift, 10\%), "readthrough" (60 nt extension, 5\%).}
 }
 \value{
 a data.table from \code{\link{gene_architecture}}
