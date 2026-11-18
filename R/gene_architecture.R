@@ -287,8 +287,7 @@ write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_leng
   codon_pos <- internal_codon_starts(c(cds_s, g_s), c(cds_e, g_e))
   codon_pos <- unique(codon_pos)
   for (round in seq_len(max_rounds)) {
-    codon <- paste0(bases[codon_pos], bases[codon_pos + 1L], bases[codon_pos + 2L])
-    bad <- codon_pos[codon %in% stop_codons]
+    bad <- feature_stop_positions(bases, codon_pos, stop_codons)
     if (!length(bad)) break
     pos <- c(bad, bad + 1L, bad + 2L)
     pos <- unique(pos[!fixed[pos]])
