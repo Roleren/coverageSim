@@ -10,6 +10,19 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// sample_uniform_regions_cpp
+IntegerVector sample_uniform_regions_cpp(IntegerVector widths, NumericVector budgets, int padding);
+RcppExport SEXP _coverageSim_sample_uniform_regions_cpp(SEXP widthsSEXP, SEXP budgetsSEXP, SEXP paddingSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type widths(widthsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type budgets(budgetsSEXP);
+    Rcpp::traits::input_parameter< int >::type padding(paddingSEXP);
+    rcpp_result_gen = Rcpp::wrap(sample_uniform_regions_cpp(widths, budgets, padding));
+    return rcpp_result_gen;
+END_RCPP
+}
 // write_feature_sequences_cpp
 Rcpp::List write_feature_sequences_cpp(Rcpp::CharacterVector tx, Rcpp::IntegerVector leader, Rcpp::IntegerVector cds_length, Rcpp::IntegerVector gene, Rcpp::IntegerVector start, Rcpp::IntegerVector end, Rcpp::CharacterVector classes, Rcpp::CharacterVector starts, Rcpp::LogicalVector has_start, Rcpp::CharacterVector chosen_stops, Rcpp::CharacterVector stop_codons, int max_rounds);
 RcppExport SEXP _coverageSim_write_feature_sequences_cpp(SEXP txSEXP, SEXP leaderSEXP, SEXP cds_lengthSEXP, SEXP geneSEXP, SEXP startSEXP, SEXP endSEXP, SEXP classesSEXP, SEXP startsSEXP, SEXP has_startSEXP, SEXP chosen_stopsSEXP, SEXP stop_codonsSEXP, SEXP max_roundsSEXP) {
@@ -47,6 +60,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_coverageSim_sample_uniform_regions_cpp", (DL_FUNC) &_coverageSim_sample_uniform_regions_cpp, 3},
     {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 12},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}

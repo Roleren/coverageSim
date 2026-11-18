@@ -1,31 +1,9 @@
-# coverageSim speed core pass 2
+# coverageSim speed core pass 3
 
-- B3k, 1 thread: 287.154 → 245.787 s; B20k, 1 thread: 1515.129 → 1552.559 s.
-- B3k, 8 threads: 109.554 s; B20k, 8 threads: stopped at 50.78 GiB PSS; no total.
-- B20k target <300 s is not achieved by the changes implemented here; coverage,
-  fragment allocation, sequence matching and flat transcript models are unchanged.
-
-| Genes | Threads | Genome before → after | Counts | Regions | Coverage | Total |
-|---:|---:|---:|---:|---:|---:|---:|
-| 3,000 | 1 | 57.906 → 35.351 | 0.390 → 0.299 | 1.591 → 0.961 | 227.267 → 209.176 | 287.154 → 245.787 |
-| 20,000 | 1 | 218.323 → 171.063 | 0.469 → 0.800 | 7.006 → 10.812 | 1289.331 → 1369.885 | 1515.129 → 1552.559 |
-| 3,000 | 8 | — → 33.878 | — → 0.272 | — → 0.913 | — → 74.491 | — → 109.554 |
-| 20,000 | 8 | — → 127.006 | — → 0.454 | — → 6.469 | stopped | unavailable |
-
-- B20k genome Rprof inclusive: writer 91.44 → 52.80 s; placement 17.02 → 10.04 s.
-- Single runs; different system load may affect timings. Benchmark driver:
-  `analysis/benchmarks/speed_core.R`; pass 1 comparison: `../../coveragesim_speed_core_20261118/bench/compiled{3,20}`.
-- Compiled writer preserves random draw order; `options(coverageSim.engine = "R")`
-  selects the original writer. Twenty overlapping-frame seeds and an empty feature
-  table matched in output and final RNG state; focused test: 41 passes.
-- B3k FASTA, feature table, GTF, and all 24 coverage, truth and dropped-read files
-  match pass 1 SHA-256. B20k FASTA, feature table, GTF and all 24 coverage, truth and dropped-read
-  files also match. All 24 B3k outputs match between 1 and 8 threads. No output
-  changes are intended.
-- Full test suite: no test failures; 14 warnings, 10 skips. Three R finalizer error
-  messages were printed outside the test-failure summary; see `../suite.log`.
-- Not implemented: coverage C++ pass, fragment/allocation and sequence-bias kernels,
-  flat model mapping, and placement rewrite. Five-seed distribution comparisons
-  are not done. The complete requested performance target remains open.
-- Eight-thread B20k stopped at 50.78 GiB proportional memory to keep headroom
-  under the requested 60 GB reservation; log: `../memory_watch.log`.
+- Branch `speed/core3`, implementation commit `7a345a7`: batch uniform region multinomial sampling in C++, using R's RNG. Arbitrary profiles and deferred probabilities retain the R path; `options(coverageSim.engine = "R")` selects it throughout.
+- B3k, one thread, same driver: baseline genome/counts/regions/coverage 36.414/0.273/0.903/249.406 s (total 286.996 s); optimized 34.960/0.278/0.884/235.304 s (total 271.426 s), 5.4% faster. Single runs; timings are sensitive to system load. Logs: `../baseline_one_thread.log`, `../optimized.log`.
+- Focused test: 20 passes, zero failures (`../focused.log`); full suite: no reported failures, 14 warnings and 10 skips, with three R finalizer error messages outside the test summary (`../suite.log`).
+- Five paired B3k seeds, 12 libraries each: zero region-budget or truth-accounting mismatches and zero truth-file differences. Position and fragment histograms were identical in these pairs (`../five_seed_checks.log`). Seeded equivalence is evidence for tested cases, not a proof for all inputs.
+- Final B20k, one thread, 32 GB reservation: genome/counts/regions/coverage 131.652/0.459/6.083/1505.987 s, total 1644.181 s; the <300 s target was not achieved (`../final20.log`, `../bench/final20/times.tsv`). Pass 2 reported 1552.559 s with a different checkout and system load, so this single-run comparison does not isolate the change. The first launch failed before simulation because the dependency library was absent; the completed run used the existing read-only library.
+- B20k comparison against pass 2: FASTA and GTF matched; 25 of 27 checked files differed, including the feature table (which gained a `read_group` column in the current checkout), 12 coverage, six truth and six dropped-read files. This is not a controlled same-checkout comparison; the causes have not been isolated. B20k output equivalence remains unverified.
+- Independent Codex review was not run: delegation is disabled for this task. The remaining coverage and fragment-allocation bottlenecks remain open.
