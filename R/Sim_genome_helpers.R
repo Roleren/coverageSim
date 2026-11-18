@@ -142,7 +142,6 @@ genome_output_test_controller <- function() {
     cds_internal_stops <-  alphabetFrequency(cds_AA)[,"*"]
     if (any(cds_internal_stops != 1) & debug_on){
       warning("malformed CDS created, corner case, rerun to avoid this")
-      if (interactive()) browser()
       print(sum(cds_internal_stops != 1))
       print(cds_AA[cds_internal_stops != 1])
     }
@@ -449,7 +448,7 @@ export_genome_output_controller <- function() {
     }
 
 
-    if (max_uorfs > 0) {
+    if (any(max_uorfs > 0)) {
       saveRDS(uorf_ranges, file = file.path(out_dir, "true_uORFs.rds"))
       simGenome <- c(simGenome, uorfs = file.path(out_dir, "true_uORFs.rds"))
     }
@@ -748,7 +747,6 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
   if (start_debug) {
     all <- which(total_stops != 1)
     i <- all[1]
-    if (interactive()) browser()
     print(table(total_stops))
     print(translate(chromosome_seqs[uorf_ranges[i]]))
     print(chromosome_seqs[uorf_ranges[i]])
@@ -761,7 +759,9 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
 create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
                                uorfs_can_overlap_cds, uorfs_can_overlap) {
   message("- Making valid uORFs ranges")
-  uorf_ranges <- IRangesList(lapply(nchar(leader_string), function(size) {
+  # max_uorfs is one number for all genes or one per gene (simGenome(n_uorfs = ...)).
+  max_uorfs <- rep_len(as.integer(max_uorfs), length(leader_string))
+  uorf_ranges <- IRangesList(Map(function(size, gene_max_uorfs) {
     all_uorfs <- IRanges()
     # Not allow to start overlapping CDS ATG, or inframe of CDS. Shorter than
     # 12 nt a uORF cannot reach past the CDS start codon.
@@ -774,7 +774,7 @@ create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
     possible_starts <- seq_len(max(size - 3L, 0L))
     possible_ends <- c(allowed_cds_spots)
     if (uorfs_can_overlap_cds != 2) possible_ends <- c(possible_starts[-seq.int(5)], possible_ends)
-    for (i in seq(max_uorfs)) {
+    for (i in seq_len(gene_max_uorfs)) {
       if (length(possible_starts) == 0 | length(possible_ends) == 0) break;
       end <- ifelse(length(possible_ends) == 1, possible_ends, sample(possible_ends, size = 1))
       pstart_all <- seq.int(end-2, max(min(possible_starts), end - uorf_max_length), by = -3)[-1]
@@ -809,7 +809,7 @@ create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
     }
     #i; all_uorfs; cat("start:"); possible_starts; cat("stop:");possible_ends; end
     all_uorfs
-  }))
+  }, nchar(leader_string), max_uorfs))
   return(uorf_ranges)
 }
 

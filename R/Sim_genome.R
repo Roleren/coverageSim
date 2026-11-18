@@ -72,6 +72,19 @@
 #'   These are short reading frames in the leader that ribosomes can translate
 #'   before reaching the main coding sequence, so they carry real signal and are
 #'   not merely decoration.
+#' @param n_uorfs NULL (default) or the exact number of uORFs per gene: one whole
+#'   number for all genes or one per gene. Unlike \code{max_uorfs} (an upper limit;
+#'   a gene silently gets fewer when its leader has no room), every gene must then get
+#'   exactly this many: genes that cannot (leader too short for the request under the
+#'   overlap settings) stop the run before any sequence is made, and genes that end up
+#'   with fewer after the random placement are reported (see \code{on_infeasible}).
+#'   Overrides \code{max_uorfs}.
+#' @param on_infeasible "error" (default) or "warning": what to do when the
+#'   \code{n_uorfs} request cannot be met, before building (impossible) or after it
+#'   (placement left a gene short). Either way the details are in the build log.
+#'   A per-gene build log (requested and built uORFs, leader length, minimum leader
+#'   needed, status and reason) is always written next to the genome as
+#'   \code{<genome_name>_build_log.tsv} and returned as \code{"build_log"}.
 #' @param uorfs_can_overlap = TRUE. Whether two uORFs of the same gene may share
 #'   sequence: TRUE or FALSE.
 #' @param uorfs_can_overlap_cds = TRUE. Whether a uORF may run into the CDS:
@@ -120,6 +133,8 @@ simGenome <- function(n = 500,
                       start_codons = "ATG",
                       stop_codons = c("TAG", "TGA", "TAA"),
                       max_uorfs = 1,
+                      n_uorfs = NULL,
+                      on_infeasible = c("error", "warning"),
                       uorfs_can_overlap = TRUE,
                       uorfs_can_overlap_cds = TRUE,
                       uorf_max_length = 60,
@@ -139,7 +154,19 @@ simGenome <- function(n = 500,
     chromosome_layout = chromosome_layout,
     chromosome_count = chromosome_count
   )
+  on_infeasible <- match.arg(on_infeasible)
   genome_input_test_controller()
+  # Exact uORF counts per gene, checked against each leader before anything is built.
+  exact_uorfs <- !is.null(n_uorfs)
+  if (exact_uorfs) {
+    check_whole_numbers(n_uorfs, "n_uorfs", min = 0, per_gene = n, allow_single = TRUE)
+    uorfs_per_gene <- rep_len(as.integer(n_uorfs), n)
+  } else uorfs_per_gene <- rep_len(as.integer(max_uorfs), n)
+  feasibility <- uorf_feasibility(uorfs_per_gene, rep_len(leader_length, n),
+                                  uorf_max_length, uorfs_can_overlap,
+                                  uorfs_can_overlap_cds, tx_names)
+  if (exact_uorfs) stop_if_infeasible(feasibility, on_infeasible)
+  max_uorfs <- uorfs_per_gene
   # The next step turns these two into per-gene coordinates, so keep them as
   # they were given for the record.
   seqnames_given <- seqnames
@@ -155,13 +182,23 @@ simGenome <- function(n = 500,
   genome_exon_ranges_controller()
   ## Sub-annotation ranges
   # uORFS
-  if (max_uorfs > 0) {
+  if (any(max_uorfs > 0)) {
     uorf_list <- create_uORFs(leader_string, chromosome_seqs, n,
                               max_uorfs, start_codons, stop_codons,
                               leader_ranges, cds_ranges, cds_grl, seqnames, strand,
                               uorf_max_length, uorfs_can_overlap_cds, uorfs_can_overlap,
                               tx_names, debug_on)
     uorf_ranges <- uorf_list[[1]]; chromosome_seqs <- uorf_list[[2]]; rm(uorf_list)
+  }
+  build_log <- uorf_build_log(feasibility,
+                              if (exists("uorf_ranges", inherits = FALSE)) uorf_ranges else NULL)
+  if (exact_uorfs && any(build_log$status != "ok")) {
+    short <- build_log[status != "ok"]
+    text <- paste0(nrow(short), " gene(s) got fewer uORFs than requested: ",
+                   paste(head(paste0(short$transcript_id, " (", short$built_uorfs, "/",
+                                     short$requested_uorfs, ")"), 10), collapse = ", "),
+                   ". See the build log; another seed or longer leaders may help.")
+    if (on_infeasible == "error") stop(text, call. = FALSE) else warning(text, call. = FALSE)
   }
   # Validate simulation
   genome_output_test_controller()
@@ -170,6 +207,7 @@ simGenome <- function(n = 500,
                                      exon_cds_ranges, gene_ranges,
                                      transcript_ranges, tx_names, gene_names)
   export_genome_output_controller()
+  simGenome <- c(simGenome, build_log = unname(write_genome_build_log(build_log, simGenome[["genome"]])))
   # Recorded last, once every setting has been used in its own order.
   step_record <- make_step_record(
     "simGenome", sys.function(), environment(), supplied, rng_state,
