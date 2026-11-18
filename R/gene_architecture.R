@@ -450,15 +450,20 @@ export_architecture_features <- function(features, leader_ranges, exon_cds_range
   out <- c(features = file.path(out_dir, "true_features.rds"),
            features_table = sub("\\.fasta$", "_features.tsv", genome_path))
   saveRDS(gr, out[["features"]])
-  data.table::fwrite(features, out[["features_table"]], sep = "\t")
-  uorf <- features$status == "translated" & features$origin == "requested" &
-    features$class %in% c("uORF", "uoORF")
-  if (any(uorf)) {
-    uorf_ranges <- gr[uorf]
-    names(uorf_ranges) <- features$transcript_id[uorf]
+  # Every translated feature, of any class, gets reads through the extra-ORF
+  # ("uorf") region of the read simulation, which samples each ORF in its own
+  # frame. Its reads are labelled "uorf:<k>" (k = position in true_uORFs.rds);
+  # read_group links that label back to the feature (see annotate_ground_truth()).
+  translated <- features$status == "translated" & features$origin == "requested"
+  features[, read_group := NA_character_]
+  if (any(translated)) {
+    features[translated, read_group := paste0("uorf:", seq_len(sum(translated)))]
+    uorf_ranges <- gr[translated]
+    names(uorf_ranges) <- features$transcript_id[translated]
     out <- c(out, uorfs = file.path(out_dir, "true_uORFs.rds"))
     saveRDS(uorf_ranges, out[["uorfs"]])
   }
+  data.table::fwrite(features, out[["features_table"]], sep = "\t")
   out
 }
 
@@ -480,4 +485,46 @@ architecture_build_log <- function(features, tx_names) {
   log[, `:=`(built_uorfs = requested_uorfs, built_features = requested_features,
              status = "ok", reason = NA_character_)]
   log[match(tx_names, transcript_id)]
+}
+
+#' Add the feature behind every simulated read to a ground-truth table
+#'
+#' Reads of the extra translons of a genome built with
+#' \code{simGenome(architecture = )} are labelled \code{"uorf:<k>"} in the ground
+#' truth. This adds \code{feature_id}, \code{class} (uORF, uoORF, NTE, intORF,
+#' doORF, dORF), \code{feature_frame} (its frame relative to the CDS) and the
+#' feature's transcript coordinates \code{feature_start}/\code{feature_end} for those reads, and
+#' \code{class = "CDS"/"leader"/"trailer"} for the others.
+#' @param truth the ground-truth table (data.table or a path to it, as written
+#'  by \code{simNGScoverage(ground_truth = TRUE)})
+#' @param simGenome the output of \code{simGenome()}
+#' @return the truth table with the added columns
+#' @export
+annotate_ground_truth <- function(truth, simGenome) {
+  if (is.character(truth)) truth <- data.table::fread(truth)
+  truth <- data.table::as.data.table(truth)
+  if (is.na(simGenome["features_table"]))
+    stop("simGenome has no features table (it was not built with architecture =)")
+  features <- data.table::fread(simGenome[["features_table"]])[!is.na(read_group)]
+  region <- sub(":.*", "", truth$sampling_group)
+  truth[, `:=`(feature_id = NA_character_, class = data.table::fifelse(
+    region == "cds", "CDS", region), feature_frame = NA_integer_,
+    feature_start = NA_integer_, feature_end = NA_integer_)]
+  truth[features, `:=`(feature_id = i.feature_id, class = i.class, feature_frame = i.frame,
+                       feature_start = i.tx_start, feature_end = i.tx_end),
+        on = .(sampling_group = read_group)]
+  # Transcript coordinate of each read's ribosome site, and its 0-based position
+  # inside its feature (so feature_position %% 3 is the frame within the feature).
+  exons <- ORFik::loadRegion(ORFik::loadTxdb(simGenome[["txdb"]]), "mrna")
+  exons <- exons[truth$transcript_id]
+  chrom <- as.character(GenomicRanges::seqnames(unlist(exons, use.names = FALSE)))[
+    cumsum(c(1L, head(lengths(exons), -1L)))]
+  site <- GenomicRanges::GRanges(chrom, IRanges::IRanges(truth$signal_position, width = 1L),
+                                 strand = truth$strand)
+  tx <- ORFik::pmapToTranscriptF(site, exons)
+  truth[, tx_position := as.integer(BiocGenerics::start(tx))]
+  truth[, feature_position := data.table::fifelse(
+    !is.na(feature_start) & tx_position >= feature_start & tx_position <= feature_end,
+    tx_position - feature_start, NA_integer_)]
+  truth[]
 }

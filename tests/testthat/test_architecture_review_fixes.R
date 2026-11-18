@@ -20,9 +20,18 @@ test_that('rebuilding without uORFs cannot reuse a stale uORF file', {
   d <- local_dir(); set.seed(2)
   suppressMessages(simGenome(n=1, out_dir=d, architecture='uORF',
     leader_length=90, cds_length=120, trailer_length=90, export_txdb=FALSE, debug_on=FALSE))
-  g <- suppressMessages(simGenome(n=1, out_dir=d, architecture='dORF',
+  # A decoy-only architecture translates nothing extra: no ORF file may remain.
+  g <- suppressMessages(simGenome(n=1, out_dir=d,
+    architecture=gene_architecture('dORF', 45, status='decoy'),
     leader_length=90, cds_length=120, trailer_length=90, export_txdb=FALSE, debug_on=FALSE))
   expect_false(file.exists(file.path(dirname(g[['genome']]), 'true_uORFs.rds')))
+  # A translated dORF is an extra translated ORF: the file holds only it.
+  g <- suppressMessages(simGenome(n=1, out_dir=d, architecture='dORF',
+    leader_length=90, cds_length=120, trailer_length=90, export_txdb=FALSE, debug_on=FALSE))
+  orfs <- readRDS(g[['uorfs']])
+  feats <- fread(g[['features_table']])[!is.na(read_group)]
+  expect_equal(length(orfs), 1L)
+  expect_equal(feats$class, 'dORF')
 })
 test_that('caller supplied architecture tables are validated', {
   a <- gene_architecture('uORF', 12); a$length <- 13L

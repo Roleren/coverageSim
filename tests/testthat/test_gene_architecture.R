@@ -114,3 +114,33 @@ test_that("reads can be simulated on a genome built from an architecture", {
   reads <- ORFik::fimport(ORFik::filepath(experiment, "default")[[1]])
   expect_equal(sum(S4Vectors::mcols(reads)$score), 4 * 1000)
 })
+
+test_that("every translated feature class gets reads in its own frame, traceable in the ground truth", {
+  set.seed(5)
+  n <- 6
+  dir <- tempfile("arch_reads_"); dir.create(dir)
+  genome <- suppressMessages(simGenome(n = n, out_dir = dir, architecture = "all",
+    leader_length = rep(200, n), cds_length = rep(600, n), trailer_length = rep(300, n),
+    cds_exons = 2, debug_on = FALSE))
+  counts <- suppressMessages(simCountTables(
+    ORFik::loadRegion(genome["txdb"], "cds"), libtypes = "RFP",
+    conditions = "WT", replicates = 1, plot_PCA = FALSE, print_statistics = FALSE))
+  SummarizedExperiment::assay(counts)[] <- 3000
+  regions <- suppressMessages(simCountTablesRegions(counts, region_proportion = list(
+    leader = list(RFP = 0.02), cds = list(RFP = 0.6), trailer = list(RFP = 0.02),
+    uorf = list(RFP = 0.36))))
+  suppressMessages(simNGScoverage(genome, regions, out_dir = dir, exp_save_dir = dir,
+    ground_truth = TRUE, libFormats = list(RFP = "ofst"), validate = FALSE))
+  truth_file <- list.files(dir, "ground_truth", recursive = TRUE, full.names = TRUE)[1]
+  truth <- annotate_ground_truth(truth_file, genome)
+  features <- truth[!is.na(feature_id)]
+  expect_setequal(unique(features$class), c("uORF", "uoORF", "intORF", "doORF", "dORF"))
+  per_class <- features[, .(inside = sum(score * !is.na(feature_position)) / sum(score),
+                            frame0 = sum(score * (feature_position %% 3 == 0), na.rm = TRUE) /
+                              sum(score)), by = class]
+  expect_true(all(per_class$inside > 0.9))
+  expect_true(all(per_class$frame0 > 0.5))
+  # Decoys get no reads.
+  table <- data.table::fread(genome[["features_table"]])
+  expect_false(any(features$feature_id %in% table[status == "decoy", feature_id]))
+})

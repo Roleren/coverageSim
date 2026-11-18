@@ -24,6 +24,9 @@ simGenome(
   start_codons = "ATG",
   stop_codons = c("TAG", "TGA", "TAA"),
   max_uorfs = 1,
+  n_uorfs = NULL,
+  on_infeasible = c("error", "warning"),
+  architecture = NULL,
   uorfs_can_overlap = TRUE,
   uorfs_can_overlap_cds = TRUE,
   uorf_max_length = 60,
@@ -114,6 +117,33 @@ gene has room for a uORF, simGenome() stops with an error.
 These are short reading frames in the leader that ribosomes can translate
 before reaching the main coding sequence, so they carry real signal and are
 not merely decoration.}
+
+\item{n_uorfs}{NULL (default) or the exact number of uORFs per gene: one whole
+number for all genes or one per gene. Unlike \code{max_uorfs} (an upper limit;
+a gene silently gets fewer when its leader has no room), every gene must then get
+exactly this many: genes that cannot (leader too short for the request under the
+overlap settings) stop the run before any sequence is made, and genes that end up
+with fewer after the random placement are reported (see \code{on_infeasible}).
+Overrides \code{max_uorfs}.}
+
+\item{on_infeasible}{"error" (default) or "warning": what to do when the
+\code{n_uorfs} request cannot be met, before building (impossible) or after it
+(placement left a gene short). Either way the details are in the build log.
+A per-gene build log (requested and built uORFs, leader length, minimum leader
+needed, status and reason) is always written next to the genome as
+\code{<genome_name>_build_log.tsv} and returned as \code{"build_log"}.}
+
+\item{architecture}{NULL (default) or the extra translons each gene should
+contain, built exactly and verified: a \code{\link{gene_architecture}} table
+(all genes), a preset name from \code{\link{architecture_preset}}, or a list
+with one of these (or NULL) per gene. Classes: uORF, uoORF, NTE, intORF, doORF,
+dORF; each translated or a decoy. Positions are chosen before any sequence is
+made, so impossible requests stop early with the gene and reason. Every other
+ORF found in the final transcripts is labelled as an incidental decoy. Writes
+\code{true_features.rds} (genomic GRangesList, one element per feature) and
+\code{<genome_name>_features.tsv}; translated uORFs and uoORFs are also written
+to \code{true_uORFs.rds} so the read simulation uses them. Cannot be combined
+with \code{max_uorfs} or \code{n_uorfs}.}
 
 \item{uorfs_can_overlap}{= TRUE. Whether two uORFs of the same gene may share
 sequence: TRUE or FALSE.}
