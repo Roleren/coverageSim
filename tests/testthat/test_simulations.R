@@ -77,7 +77,7 @@ test_that("simNGScoverage retains the explicitly named legacy point mode", {
 test_that("simGenome exports the expected files for coding-only genomes", {
   fixture <- make_simulation_fixture(max_uorfs = 0)
 
-  expect_setequal(names(fixture$sim_genome), c("genome", "gtf", "txdb"))
+  expect_setequal(names(fixture$sim_genome), c("genome", "gtf", "txdb", "build_log"))
   expect_true(all(file.exists(unname(fixture$sim_genome))))
   expect_s4_class(ORFik::loadTxdb(fixture$sim_genome["txdb"]), "TxDb")
   expect_true(all(ORFik::widthPerGroup(fixture$cds, FALSE) %% 3 == 0))

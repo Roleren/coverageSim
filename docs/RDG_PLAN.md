@@ -113,6 +113,17 @@ complex architectures in roughly the time of the current no-uORF run. Results mu
 - Also: `browser()` calls in package code (Sim_genome_helpers.R, debug paths) must go; a database finalizer warning
   appears intermittently in tests (origin unknown).
 
+## 5c. Step-4 hot spots (Codex line profile, 3,000 genes, 2 samples, simulated_rpf + ground truth)
+
+- `build_transcript_models` 21 s (list indexing + exon reorder per transcript), `append_rnase_to_simulated_rpf_table`
+  14 s (per-group loop), `make_simulated_rpf_fragments` 8 s, `nt_coverage_all_regions` 7 s; `rolling_weighted_sum` is
+  already compiled (stats::filter); the numeric autocorrelation kernel is not used by the default shapes(9) path.
+- Verified: batched RNase extension 57.9 s -> 46.8 s end to end, byte-identical output (adopt, after package tests).
+  Sorted-rank transcript models 19.9 -> 15.5 s on the real models (adopt after full-pipeline test). C++ primitives for the
+  kernel/mapping/candidate fitting are 2.5-39x faster in isolation but small in total: not a priority.
+  Code: hakon_playground/agent_sync/codex_tasks/coveragesim_hotspots_20261118/ (replacements.R, replacement_models.R,
+  replacements.cpp, tests). Conclusion: Step 4 needs batching, not C++; genome building is the real time sink.
+
 ## 6. Order of work (branch feature/rdg-architecture)
 
 0. Fix the three bugs above (tests first).
