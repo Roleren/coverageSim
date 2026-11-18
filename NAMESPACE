@@ -26,3 +26,6 @@ import(ORFik)
 import(data.table)
 import(ggplot2)
 importFrom(grid,unit)
+
+useDynLib(coverageSim, .registration = TRUE)
+importFrom(Rcpp, evalCpp)

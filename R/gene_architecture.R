@@ -114,7 +114,12 @@ architecture_per_gene <- function(architecture, n, tx_names) {
   if (data.table::is.data.table(architecture) || is.data.frame(architecture)) {
     architecture <- rep(list(revalidate_architecture(architecture)), n)
   } else if (is.character(architecture)) {
-    architecture <- lapply(rep_len(architecture, n), architecture_preset)
+    # Presets are immutable here: rbindlist creates the per-gene result.
+    # Construct each distinct preset once instead of once per transcript.
+    preset_names <- rep_len(architecture, n)
+    unique_names <- unique(preset_names)
+    presets <- lapply(unique_names, architecture_preset)
+    architecture <- presets[match(preset_names, unique_names)]
   } else if (is.list(architecture)) {
     if (length(architecture) != n)
       stop("architecture as a list needs one entry per gene (", n, "), got ",
@@ -282,8 +287,7 @@ write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_leng
   codon_pos <- internal_codon_starts(c(cds_s, g_s), c(cds_e, g_e))
   codon_pos <- unique(codon_pos)
   for (round in seq_len(max_rounds)) {
-    codon <- paste0(bases[codon_pos], bases[codon_pos + 1L], bases[codon_pos + 2L])
-    bad <- codon_pos[codon %in% stop_codons]
+    bad <- feature_stop_positions(bases, codon_pos, stop_codons)
     if (!length(bad)) break
     pos <- c(bad, bad + 1L, bad + 2L)
     pos <- unique(pos[!fixed[pos]])

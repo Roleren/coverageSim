@@ -16,7 +16,9 @@ Depends:
   R (>= 3.6.0),
   ORFik (>= 1.13.12),
   data.table
+LinkingTo: Rcpp
 Imports:
+  Rcpp,
   AnnotationDbi,
   BiocGenerics,
   BiocParallel,
