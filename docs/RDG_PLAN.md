@@ -96,6 +96,20 @@ complex architectures in roughly the time of the current no-uORF run. Results mu
      the omitted reads.
   2. Medium: a genome with `max_uorfs = 0` plus the default region table fails (`true_uORFs.rds` read unconditionally).
   3. Medium: region sets without CDS fail (`cds_ranges` used unconditionally in simNGScoverage).
+  4. (benchmark) by default the ground-truth `sampling_group` holds a per-position row index, not the region/feature,
+     so reads cannot be attributed to their ORF without a workaround.
+- Realism vs real HEK293 CHX (PRJNA556704), 300 genes, 3 uORFs max (benchmark subagent, scratch covsim_bench/):
+  good: CDS frame .64/.12/.24 vs .66/.14/.19; start peak 7.2 vs 6.8 x CDS mean; roughness at matched depth (Gini .85 vs
+  .87). Off: trailer density ~15x real (0.4 vs 0.03 of CDS mean) and leader 2.5x; no stop peak / pre-stop pattern;
+  no 5' ramp; read lengths 27-29 vs real 31-34 (defaults); replicate codon correlation 0.28 vs 0.70 (roughness is
+  per-replicate noise, not shared pausing); default depth only ~10k reads/library.
+- ORF-caller usefulness: all 888 uORFs plus 439 unlabelled decoys found in leaders; ORFscore AUC (uORF vs decoy) .85
+  (leader-only), .84 (uORF-uORF overlap), .71 (CDS-overlapping) at 85x default depth, ~.6 at default depth; in
+  uORF/CDS overlaps 90% of reads come from the CDS. So callers can be benchmarked only for simple uORFs, and the
+  decoys must be labelled by the simulator, not reconstructed afterwards.
+- Defaults to change (separately, with Carina): trailer/leader proportions closer to real, length distribution from
+  learn_fragment_geometry() or a realistic default, a shared (per-gene, not per-replicate) pausing component so
+  replicates correlate, stop-codon/termination peak.
 - Also: `browser()` calls in package code (Sim_genome_helpers.R, debug paths) must go; a database finalizer warning
   appears intermittently in tests (origin unknown).
 
