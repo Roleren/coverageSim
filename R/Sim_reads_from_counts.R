@@ -578,7 +578,19 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
         sampled_lengths <- if (region_rnase_reach > 0L) {
           lengths + 2L * region_rnase_reach
         } else lengths
-        sample <- lapply(seq_along(region_ranges), function(y) {
+        # The usual flat profile can be sampled for all genes in one call.
+        # Keep arbitrary user expressions and deferred probabilities on the R path.
+        uniform_batch <- !identical(getOption("coverageSim.engine"), "R") &&
+          identical(ideal_cov, quote(rep(1, x))) && !defer_counts &&
+          length(lengths) == length(region_counts) &&
+          length(lengths) == length(region_ranges) && all(lengths > 0L) &&
+          all(is.finite(region_counts) & region_counts >= 0 &
+                region_counts == floor(region_counts) & region_counts <= .Machine$integer.max)
+        if (uniform_batch) {
+          sample <- sample_uniform_regions_cpp(as.integer(lengths),
+                                              as.numeric(region_counts),
+                                              as.integer(region_rnase_reach))
+        } else sample <- lapply(seq_along(region_ranges), function(y) {
           x <- lengths[y]
           weights <- eval(ideal_cov)
           values <- if (defer_counts) draw_site_probabilities(weights) * region_counts[y]
@@ -587,7 +599,7 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
             c(rep(0, region_rnase_reach), values, rep(0, region_rnase_reach))
           } else values
         })
-        sample <- unlist(sample, use.names = FALSE)
+        if (!uniform_batch) sample <- unlist(sample, use.names = FALSE)
       }
       # Which region of which transcript each position belongs to, so that
       # fragment building can keep each region's reads within that region.
