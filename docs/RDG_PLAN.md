@@ -8,6 +8,26 @@ literature table (no published read-level simulator has RDG coupling; TASEP/ICIE
 RiboBA 2026 is the closest competitor and resamples real reads). Pending: Codex test/bug/performance report, realism
 benchmark, Carina's design notes. This plan will be updated with them.
 
+## 0. Primary goal and priorities (Håkon, 2026-11-18)
+
+coverageSim has to be *sufficient*, not fancy: good enough that, together with denoising and the master translon
+classifier, we can go through the whole human genome and understand the totality of the RDG landscape. The goal is
+biology. End state: a per-region flag over the human genome, "understood" (real data fits the best RDG explanation
+within what the simulator says is technical variance) or "not understood"; not-understood regions are looped back
+to add the real complexity they show (new architectures, effects, noise terms), then everything is re-run.
+
+How much noise / technical variance to include: only what changes the classifier's decisions, calibrated on real
+libraries. Concretely, in order:
+1. List the signal features the classifier/denoiser uses (frame fraction, start/stop peaks, coverage dispersion and
+   gaps, UTR background, read lengths, P-site offset errors, multimapping/mappability, depth).
+2. For each, compare simulated vs real distributions (posterior predictive checks on matched genes/depth). A term is
+   needed when leaving it out moves classifier calls on simulated data away from calls on real data; otherwise skip.
+3. Known gaps that matter (from 5b): UTR background, stop peak, replicate-shared pausing, read lengths, mappability.
+4. The "not understood" flag = model misfit: real region data outside the simulator's predictive range for every RDG
+   architecture the classifier considers.
+Priority rule: every task is ranked by whether it helps classify real human regions correctly or flag misfit;
+software polish (C++, exotic options) only when it blocks that.
+
 ## 1. What is there and what is missing
 
 | Area | Now | Gap for RDG testing |
