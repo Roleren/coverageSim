@@ -618,9 +618,14 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
           dt_region[, size := rep(read_lengths, .N)]
         } else dt_region[, size := sample(read_lengths, size = .N, replace = TRUE)]
       } else {
+        # One CIGAR per position, picked from the few possible strings instead of
+        # pasting a string per position; the random draws are the same as
+        # sample(read_lengths, .N, replace = TRUE) (= x[sample.int(length(x), ...)]).
+        cigars <- paste0(read_lengths, "M")
         if (length(read_lengths) == 1) {
-          dt_region[, cigar := paste0(sample(rep(read_lengths, .N), size = .N, replace = TRUE), "M")]
-        } else dt_region[, cigar := paste0(sample(read_lengths, size = .N, replace = TRUE), "M")]
+          invisible(sample.int(nrow(dt_region), nrow(dt_region), replace = TRUE))
+          dt_region[, cigar := rep(cigars, .N)]
+        } else dt_region[, cigar := cigars[sample.int(length(read_lengths), .N, replace = TRUE)]]
       }
     } else dt_region <- data.table::data.table()
     return(dt_region)
