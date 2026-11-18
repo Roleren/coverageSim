@@ -262,6 +262,16 @@ internal_codon_starts <- function(start, end) {
 # once. Only bases that are not part of a fixed start/stop codon are redrawn.
 write_feature_sequences <- function(tx_seqs, arch, leader_length, cds_total_length,
                                     stop_codons, max_rounds = 200L) {
+  if (!identical(getOption("coverageSim.engine"), "R") && max_rounds > 0L) {
+    stops <- if (nrow(arch)) ifelse(arch$class == "NTE", NA_character_,
+                    sample(stop_codons, nrow(arch), replace = TRUE)) else character()
+    if (nrow(arch)) arch[, stop_codon := stops]
+    result <- write_feature_sequences_cpp(tx_seqs, as.integer(leader_length),
+      as.integer(cds_total_length), as.integer(arch$gene), as.integer(arch$tx_start),
+      as.integer(arch$tx_end), arch$class, arch$start_codon, stops,
+      stop_codons, as.integer(max_rounds))
+    return(list(tx_seqs = result$tx_seqs, arch = arch, rounds = result$rounds))
+  }
   widths <- nchar(tx_seqs)
   offset <- c(0L, cumsum(widths))[seq_along(widths)]
   bases <- strsplit(paste(tx_seqs, collapse = ""), "", fixed = TRUE)[[1]]

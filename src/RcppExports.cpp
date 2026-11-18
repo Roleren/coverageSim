@@ -10,6 +10,27 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// write_feature_sequences_cpp
+Rcpp::List write_feature_sequences_cpp(Rcpp::CharacterVector tx, Rcpp::IntegerVector leader, Rcpp::IntegerVector cds_length, Rcpp::IntegerVector gene, Rcpp::IntegerVector start, Rcpp::IntegerVector end, Rcpp::CharacterVector classes, Rcpp::CharacterVector starts, Rcpp::CharacterVector chosen_stops, Rcpp::CharacterVector stop_codons, int max_rounds);
+RcppExport SEXP _coverageSim_write_feature_sequences_cpp(SEXP txSEXP, SEXP leaderSEXP, SEXP cds_lengthSEXP, SEXP geneSEXP, SEXP startSEXP, SEXP endSEXP, SEXP classesSEXP, SEXP startsSEXP, SEXP chosen_stopsSEXP, SEXP stop_codonsSEXP, SEXP max_roundsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type tx(txSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type leader(leaderSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type cds_length(cds_lengthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type gene(geneSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type start(startSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type end(endSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type classes(classesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type starts(startsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type chosen_stops(chosen_stopsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type stop_codons(stop_codonsSEXP);
+    Rcpp::traits::input_parameter< int >::type max_rounds(max_roundsSEXP);
+    rcpp_result_gen = Rcpp::wrap(write_feature_sequences_cpp(tx, leader, cds_length, gene, start, end, classes, starts, chosen_stops, stop_codons, max_rounds));
+    return rcpp_result_gen;
+END_RCPP
+}
 // feature_stop_positions
 Rcpp::IntegerVector feature_stop_positions(Rcpp::CharacterVector bases, Rcpp::IntegerVector positions, Rcpp::CharacterVector stop_codons);
 RcppExport SEXP _coverageSim_feature_stop_positions(SEXP basesSEXP, SEXP positionsSEXP, SEXP stop_codonsSEXP) {
@@ -25,6 +46,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 11},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}
 };
