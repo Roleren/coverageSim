@@ -293,6 +293,10 @@ simNGScoverage <- function(simGenome,
   validate_dmn_zero_inflation(dmn_zero_inflation)
   validate_rnase_bias(rnase_bias)
   cores <- resolve_cores(cores)
+  # Translon shares per library from simRDGflow(), unless given explicitly.
+  rdg_share <- S4Vectors::metadata(count_table)$rdg_feature_share
+  if (!is.null(rdg_share) && !"uorf_prop_within_gene" %in% supplied)
+    uorf_prop_within_gene <- rdg_share
   input_validation_controller()
 
   # 2. Load the annotation for the requested transcripts.
@@ -316,7 +320,11 @@ simNGScoverage <- function(simGenome,
   if ("uorf" %in% regionsToSample) {
     keep <- if (length(uorf_ranges)) txNames(uorf_ranges) %in% transcripts else logical(0)
     uorf_ranges <- uorf_ranges[keep]
-    if (uorf_prop_mode == "numeric") uorf_prop_within_gene <- uorf_prop_within_gene[keep]
+    if (uorf_prop_mode == "numeric") {
+      uorf_prop_within_gene <- if (is.matrix(uorf_prop_within_gene)) {
+        uorf_prop_within_gene[keep, , drop = FALSE]
+      } else uorf_prop_within_gene[keep]
+    }
     # None of the requested genes has a uORF: their uORF reads are left out
     # and reported per sample, so there is nothing to tile.
     if (!length(uorf_ranges)) regionsToSample <- setdiff(regionsToSample, "uorf")
@@ -360,7 +368,9 @@ simNGScoverage <- function(simGenome,
     dt_final <- nt_coverage_all_regions(count_table[, s], libClass, ideal_coverage,
                                         rnase_bias, auto_correlation, read_lengths_per,
                                         uorf_ranges, uorf_prop_mode,
-                                        uorf_prop_within_gene, sampling,
+                                        if (is.matrix(uorf_prop_within_gene)) {
+                                          uorf_prop_within_gene[, s]
+                                        } else uorf_prop_within_gene, sampling,
                                         dmn_alpha_scale,
                                         dmn_family, dmn_gdm_scale, dmn_zero_inflation,
                                         debug_coverage, env = run_env,

@@ -430,7 +430,11 @@ input_validation_controller <- function() {
       }
       uorf_prop_mode <- ifelse(is(uorf_prop_within_gene, "character"),
                                "character", "numeric")
-      if (uorf_prop_mode == "numeric") {
+      if (uorf_prop_mode == "numeric" && is.matrix(uorf_prop_within_gene)) {
+        # One column per library (simRDGflow()): rows follow true_uORFs.rds.
+        stopifnot(nrow(uorf_prop_within_gene) == length(uorf_ranges),
+                  ncol(uorf_prop_within_gene) == ncol(count_table))
+      } else if (uorf_prop_mode == "numeric") {
         stopifnot(length(uorf_ranges) == length(uorf_prop_within_gene))
         stopifnot(all(txNames(uorf_ranges) == names(uorf_prop_within_gene)))
       } else stopifnot(uorf_prop_within_gene %in% c("uniform", "length"))

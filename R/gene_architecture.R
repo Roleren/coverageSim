@@ -487,6 +487,17 @@ architecture_build_log <- function(features, tx_names) {
   log[match(tx_names, transcript_id)]
 }
 
+# The features table as written by simGenome(architecture = ), with empty
+# fields (written for NA) read back as NA.
+read_features_table <- function(simGenome) {
+  if (is.na(simGenome["features_table"]))
+    stop("simGenome has no features table: build it with simGenome(architecture = )")
+  x <- data.table::fread(simGenome[["features_table"]], na.strings = c("", "NA"))
+  for (col in c("read_group", "nested_in"))
+    if (col %in% names(x)) data.table::set(x, j = col, value = as.character(x[[col]]))
+  x[]
+}
+
 #' Add the feature behind every simulated read to a ground-truth table
 #'
 #' Reads of the extra translons of a genome built with
@@ -505,7 +516,7 @@ annotate_ground_truth <- function(truth, simGenome) {
   truth <- data.table::as.data.table(truth)
   if (is.na(simGenome["features_table"]))
     stop("simGenome has no features table (it was not built with architecture =)")
-  features <- data.table::fread(simGenome[["features_table"]])[!is.na(read_group)]
+  features <- read_features_table(simGenome)[!is.na(read_group)]
   region <- sub(":.*", "", truth$sampling_group)
   truth[, `:=`(feature_id = NA_character_, class = data.table::fifelse(
     region == "cds", "CDS", region), feature_frame = NA_integer_,

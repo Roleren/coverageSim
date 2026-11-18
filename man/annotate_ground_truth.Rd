@@ -19,6 +19,7 @@ the truth table with the added columns
 Reads of the extra translons of a genome built with
 \code{simGenome(architecture = )} are labelled \code{"uorf:<k>"} in the ground
 truth. This adds \code{feature_id}, \code{class} (uORF, uoORF, NTE, intORF,
-doORF, dORF) and \code{frame} (relative to the CDS) for those reads, and
+doORF, dORF), \code{feature_frame} (its frame relative to the CDS) and the
+feature's transcript coordinates \code{feature_start}/\code{feature_end} for those reads, and
 \code{class = "CDS"/"leader"/"trailer"} for the others.
 }
