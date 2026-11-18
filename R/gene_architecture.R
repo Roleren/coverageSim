@@ -114,7 +114,12 @@ architecture_per_gene <- function(architecture, n, tx_names) {
   if (data.table::is.data.table(architecture) || is.data.frame(architecture)) {
     architecture <- rep(list(revalidate_architecture(architecture)), n)
   } else if (is.character(architecture)) {
-    architecture <- lapply(rep_len(architecture, n), architecture_preset)
+    # Presets are immutable here: rbindlist creates the per-gene result.
+    # Construct each distinct preset once instead of once per transcript.
+    preset_names <- rep_len(architecture, n)
+    unique_names <- unique(preset_names)
+    presets <- lapply(unique_names, architecture_preset)
+    architecture <- presets[match(preset_names, unique_names)]
   } else if (is.list(architecture)) {
     if (length(architecture) != n)
       stop("architecture as a list needs one entry per gene (", n, "), got ",
