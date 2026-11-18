@@ -124,6 +124,22 @@ complex architectures in roughly the time of the current no-uORF run. Results mu
   Code: hakon_playground/agent_sync/codex_tasks/coveragesim_hotspots_20261118/ (replacements.R, replacement_models.R,
   replacements.cpp, tests). Conclusion: Step 4 needs batching, not C++; genome building is the real time sink.
 
+## 5d. Progress (2026-11-18)
+
+- Step 0 done (9080c13; bug 4 by carina-claude, merge 7e0e944).
+- Step 1 done (dbe6262, b2d66b2): `n_uorfs` exact counts, feasibility check before building, `<genome>_build_log.tsv`,
+  `on_infeasible`, no automatic `browser()`.
+- Step 2 first version: `simGenome(architecture = )` with `gene_architecture()` / `architecture_preset()`
+  (R/gene_architecture.R). Classes uORF, uoORF, NTE (any start codon, in frame to the CDS stop), intORF, doORF, dORF;
+  translated or decoy; per-gene lists. Placement in transcript coordinates before any sequence (empty window = error at
+  once; greedy dead ends retried 50x per gene before error), sequence written with all start/stop codons fixed and every
+  internal codon of every feature and the CDS kept stop-free in its own frame (batch redraw of free bases), each feature
+  verified, all other ORFs labelled as incidental decoys with class and `nested_in` (in-frame truncation of a feature
+  or the CDS), features mapped to the genome (`true_features.rds`, `<genome>_features.tsv`); translated uORF/uoORF also
+  go to `true_uORFs.rds`, so the current read simulator already uses them. 3,000 genes x 5 features: 12.6 s
+  (old builder, 3,000 genes x <= 1 uORF: 80 s). Not yet: frameshift and readthrough features, isoforms, suppression of
+  incidental leader ATGs, reads for NTE/intORF/doORF/dORF (step 3).
+
 ## 6. Order of work (branch feature/rdg-architecture)
 
 0. Fix the three bugs above (tests first).

@@ -85,6 +85,17 @@
 #'   A per-gene build log (requested and built uORFs, leader length, minimum leader
 #'   needed, status and reason) is always written next to the genome as
 #'   \code{<genome_name>_build_log.tsv} and returned as \code{"build_log"}.
+#' @param architecture NULL (default) or the extra translons each gene should
+#'   contain, built exactly and verified: a \code{\link{gene_architecture}} table
+#'   (all genes), a preset name from \code{\link{architecture_preset}}, or a list
+#'   with one of these (or NULL) per gene. Classes: uORF, uoORF, NTE, intORF, doORF,
+#'   dORF; each translated or a decoy. Positions are chosen before any sequence is
+#'   made, so impossible requests stop early with the gene and reason. Every other
+#'   ORF found in the final transcripts is labelled as an incidental decoy. Writes
+#'   \code{true_features.rds} (genomic GRangesList, one element per feature) and
+#'   \code{<genome_name>_features.tsv}; translated uORFs and uoORFs are also written
+#'   to \code{true_uORFs.rds} so the read simulation uses them. Cannot be combined
+#'   with \code{max_uorfs} or \code{n_uorfs}.
 #' @param uorfs_can_overlap = TRUE. Whether two uORFs of the same gene may share
 #'   sequence: TRUE or FALSE.
 #' @param uorfs_can_overlap_cds = TRUE. Whether a uORF may run into the CDS:
@@ -135,6 +146,7 @@ simGenome <- function(n = 500,
                       max_uorfs = 1,
                       n_uorfs = NULL,
                       on_infeasible = c("error", "warning"),
+                      architecture = NULL,
                       uorfs_can_overlap = TRUE,
                       uorfs_can_overlap_cds = TRUE,
                       uorf_max_length = 60,
@@ -158,6 +170,11 @@ simGenome <- function(n = 500,
   genome_input_test_controller()
   # Exact uORF counts per gene, checked against each leader before anything is built.
   exact_uorfs <- !is.null(n_uorfs)
+  if (!is.null(architecture)) {
+    if (exact_uorfs || ("max_uorfs" %in% supplied && any(max_uorfs > 0)))
+      stop("Use either architecture or max_uorfs/n_uorfs, not both", call. = FALSE)
+    max_uorfs <- 0L
+  }
   if (exact_uorfs) {
     check_whole_numbers(n_uorfs, "n_uorfs", min = 0, per_gene = n, allow_single = TRUE)
     uorfs_per_gene <- rep_len(as.integer(n_uorfs), n)
@@ -167,6 +184,12 @@ simGenome <- function(n = 500,
                                   uorfs_can_overlap_cds, tx_names)
   if (exact_uorfs) stop_if_infeasible(feasibility, on_infeasible)
   max_uorfs <- uorfs_per_gene
+  # Place every architecture feature now, so impossible requests stop here.
+  if (!is.null(architecture)) {
+    arch <- place_features(architecture_per_gene(architecture, n, tx_names),
+                           rep_len(leader_length, n), rep_len(cds_length, n) + 6L,
+                           rep_len(trailer_length, n))
+  }
   # The next step turns these two into per-gene coordinates, so keep them as
   # they were given for the record.
   seqnames_given <- seqnames
@@ -176,6 +199,19 @@ simGenome <- function(n = 500,
   ## Create annotation
   # Transcriptome
   make_transcriptome_sequences_controller()
+  if (!is.null(architecture)) {
+    built <- build_architectures(arch, leader_string, cds_string, trailer_string,
+                                 start_codons, stop_codons, tx_names)
+    leader_string <- built$leader_string; trailer_string <- built$trailer_string
+    cds_string <- built$cds_string
+    cds_string_genomic <- splice_cds_back(cds_string_genomic, as.character(cds_string),
+                                          cds_exons, cds_intron_length)
+    gene_string <- DNAStringSet(paste0(leader_string, cds_string_genomic, trailer_string))
+    names(gene_string) <- tx_names
+    gene_string[names(strand)[strand == "-"]] <-
+      reverseComplement(gene_string[names(strand)[strand == "-"]])
+    features <- built$features; rm(built)
+  }
   # Chromosomes
   make_genome_sequences_controller()
   ## Make exon ranges
@@ -208,6 +244,11 @@ simGenome <- function(n = 500,
                                      transcript_ranges, tx_names, gene_names)
   export_genome_output_controller()
   simGenome <- c(simGenome, build_log = unname(write_genome_build_log(build_log, simGenome[["genome"]])))
+  if (!is.null(architecture)) {
+    simGenome <- c(simGenome, export_architecture_features(
+      features, leader_ranges, exon_cds_ranges, trailer_ranges, tx_names,
+      out_dir, simGenome[["genome"]]))
+  }
   # Recorded last, once every setting has been used in its own order.
   step_record <- make_step_record(
     "simGenome", sys.function(), environment(), supplied, rng_state,
