@@ -71,7 +71,7 @@ test_that("simNGScoverage retains the explicitly named legacy point mode", {
   expect_s4_class(imported, "GRanges")
   expect_false(is(imported, "GAlignments"))
   expect_true(all(GenomicRanges::width(imported) == 1L))
-  expect_true(all(S4Vectors::mcols(imported)$size %in% 27:29))
+  expect_true(all(S4Vectors::mcols(imported)$size %in% 25:36))
 })
 
 test_that("simGenome exports the expected files for coding-only genomes", {

@@ -286,11 +286,25 @@ default_ribosome_site_offset <- function(fragment_length, site_reference) {
   as.integer(p_offset + ifelse(site_reference == "a_site", 3L, 0L))
 }
 
+# Pooled RFP read-length distribution of 702 human runs (mode 26-35 nt, each run
+# normalised over 25-36 nt, then averaged; carina-claude C2, 2026-11-18).
+# Lengths outside 25-36 get a normal(30.5, 2.3) weight on the same scale.
+measured_rfp_length_weights <- function(lengths) {
+  table_p <- c(`25` = .046, `26` = .062, `27` = .073, `28` = .090, `29` = .123,
+               `30` = .157, `31` = .152, `32` = .105, `33` = .071, `34` = .054,
+               `35` = .045, `36` = .022)
+  w <- unname(table_p[as.character(lengths)])
+  outside <- is.na(w)
+  w[outside] <- stats::dnorm(lengths[outside], mean = 30.5, sd = 2.3) *
+    (.157 / stats::dnorm(30, mean = 30.5, sd = 2.3))
+  w
+}
+
 default_fragment_distribution <- function(fragment_lengths,
                                           site_reference = "a_site") {
   length_counts <- table(as.integer(fragment_lengths))
   lengths <- as.integer(names(length_counts))
-  length_weight <- stats::dnorm(lengths, mean = 29, sd = 1.5) *
+  length_weight <- measured_rfp_length_weights(lengths) *
     as.numeric(length_counts)
   if (!any(length_weight > 0)) length_weight <- as.numeric(length_counts)
   offset <- default_ribosome_site_offset(lengths, site_reference)

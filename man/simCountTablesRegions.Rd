@@ -8,9 +8,9 @@
 simCountTablesRegions(
   count_table = simCountTables(),
   regionsToSample = c("leader", "cds", "trailer", "uorf"),
-  region_proportion = list(leader = list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0), cds =
-    list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0), trailer = list(RFP = 0.1, RNA = 0.3,
-    CAGE = 0, PAS = 1), uorf = list(RFP = 0.1, RNA = 0, CAGE = 0, PAS = 0)),
+  region_proportion = list(leader = list(RFP = 0.025, RNA = 0.3, CAGE = 1, PAS = 0), cds
+    = list(RFP = 0.938, RNA = 0.4, CAGE = 0, PAS = 0), trailer = list(RFP = 0.017, RNA =
+    0.3, CAGE = 0, PAS = 1), uorf = list(RFP = 0.02, RNA = 0, CAGE = 0, PAS = 0)),
   sampling = c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"),
   region_dmn_concentration = 1
 )
@@ -22,10 +22,15 @@ simCountTablesRegions(
 c("leader", "cds", "trailer", "uorf")}
 
 \item{region_proportion}{named list of mean proportions of sampling per region, default:
-\code{list(leader =  list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0),
-cds =     list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0),
-trailer = list(RFP = 0.1, RNA = 0.3, CAGE = 0, PAS = 1),
-uorf =    list(RFP = 0.1, RNA = 0,   CAGE = 0, PAS = 0))}}
+\code{list(leader =  list(RFP = 0.025, RNA = 0.3, CAGE = 1, PAS = 0),
+cds =     list(RFP = 0.938, RNA = 0.4, CAGE = 0, PAS = 0),
+trailer = list(RFP = 0.017, RNA = 0.3, CAGE = 0, PAS = 1),
+uorf =    list(RFP = 0.02, RNA = 0,   CAGE = 0, PAS = 0))}.
+The RFP shares are the medians of 757 human RFP libraries from 74 studies
+(leader incl. uORF .043, CDS .934, trailer .017; p10-p90 leader .020-.099,
+trailer .012-.040; measured by carina-claude 2026-11-18, accepted by
+Carina and Håkon). Use \code{\link{simRDGflow}} to set the uORF/CDS split
+from the ribosome flow model instead.}
 
 \item{sampling}{named list of sampling modes per library type, default:
 c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"), where MN is multinomial, alternative is

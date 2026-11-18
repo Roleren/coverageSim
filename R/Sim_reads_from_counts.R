@@ -55,7 +55,9 @@
 #'     where b is an internal value sampled per gene in interval 3 to 15.
 #' A numeric odd-length kernel can also be supplied, including the learned
 #' kernel returned by code{learn_end_bias()$auto_correlation}.
-#' @param read_lengths_per a list, default: list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1)
+#' @param read_lengths_per a list, default: list(RFP = 25:36, RNA = 100, CAGE = 1, PAS = 1).
+#' RFP lengths are weighted by the pooled length distribution of 702 human RFP
+#' runs (mode 30-31 nt; \code{measured_rfp_length_weights()}).
 #' @param sampling a list, default: list(leader = list(RFP = "MN", RNA = "MN"),
 #' cds =    list(RFP = "DMN"),
 #' trailer =list(RFP = "MN"),
@@ -236,7 +238,7 @@ simNGScoverage <- function(simGenome,
                                              CAGE = 1, PAS = 1),
                            auto_correlation = list(cds = list(RFP = shapes(9)),
                                                    uorf =list(RFP = shapes(9))),
-                           read_lengths_per = list(RFP = 27:29, RNA = 100,
+                           read_lengths_per = list(RFP = 25:36, RNA = 100,
                                                    CAGE = 1, PAS = 1),
                            sampling = list(leader = list(RFP = "MN", RNA = "MN"),
                                            cds =    list(RFP = "DMN"),

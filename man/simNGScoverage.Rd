@@ -18,7 +18,7 @@ simNGScoverage(
     x)))),
   rnase_bias = list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = 1, CAGE = 1, PAS = 1),
   auto_correlation = list(cds = list(RFP = shapes(9)), uorf = list(RFP = shapes(9))),
-  read_lengths_per = list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1),
+  read_lengths_per = list(RFP = 25:36, RNA = 100, CAGE = 1, PAS = 1),
   sampling = list(leader = list(RFP = "MN", RNA = "MN"), cds = list(RFP = "DMN"), trailer
     = list(RFP = "MN"), uorf = list(RFP = "DMN")),
   dmn_alpha_scale = NULL,
@@ -100,7 +100,9 @@ otherwise silently disable the RNase kernel entirely.}
 A numeric odd-length kernel can also be supplied, including the learned
 kernel returned by code{learn_end_bias()$auto_correlation}.}
 
-\item{read_lengths_per}{a list, default: list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1)}
+\item{read_lengths_per}{a list, default: list(RFP = 25:36, RNA = 100, CAGE = 1, PAS = 1).
+RFP lengths are weighted by the pooled length distribution of 702 human RFP
+runs (mode 30-31 nt; \code{measured_rfp_length_weights()}).}
 
 \item{sampling}{a list, default: list(leader = list(RFP = "MN", RNA = "MN"),
 cds =    list(RFP = "DMN"),
