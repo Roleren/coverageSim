@@ -66,7 +66,7 @@ test_that("decoys are built untranslated and incidental ORFs are labelled", {
   expect_equal(as.vector(table(requested$status)), c(4L, 4L)) # decoy, translated
   incidental <- features[origin == "incidental"]
   expect_true(all(incidental$status == "decoy"))
-  expect_true(all(incidental$class %in% c(feature_classes, "N_truncation")))
+  expect_true(all(incidental$class %in% c(feature_classes, "N_truncation", "spanning")))
   # Only the translated uORFs reach the read simulation.
   uorfs <- readRDS(genome[["uorfs"]])
   expect_equal(length(uorfs), 4L)

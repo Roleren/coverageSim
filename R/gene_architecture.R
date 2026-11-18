@@ -43,6 +43,8 @@ feature_classes <- c("uORF", "uoORF", "NTE", "intORF", "doORF", "dORF")
 gene_architecture <- function(class, length, start_codon = "ATG",
                               status = "translated", frame = NA_integer_,
                               may_overlap = TRUE) {
+  if (!is.numeric(length) || anyNA(length) || any(length != floor(length)))
+    stop("Feature lengths must be whole numbers")
   n <- max(lengths(list(class, length)))
   arch <- data.table::data.table(class = rep_len(as.character(class), n),
                                  length = rep_len(as.integer(length), n),
@@ -57,6 +59,8 @@ gene_architecture <- function(class, length, start_codon = "ATG",
     stop("status must be 'translated' or 'decoy'")
   if (any(nchar(arch$start_codon) != 3 | grepl("[^ACGT]", arch$start_codon)))
     stop("start_codon must be 3 letters of A, C, G, T")
+  if (any(arch$start_codon %in% c("TAA", "TAG", "TGA")))
+    stop("start_codon cannot be a stop codon")
   if (any(!is.na(arch$frame) & !arch$frame %in% 1:2))
     stop("frame must be 1, 2 or NA")
   orf <- arch$class != "NTE"
@@ -92,10 +96,23 @@ architecture_preset <- function(name) {
     stop("Unknown preset '", name, "'"))
 }
 
+# A table built or edited by hand goes through the same checks as
+# gene_architecture(), with its defaults for missing columns.
+revalidate_architecture <- function(a) {
+  a <- data.table::as.data.table(a)
+  if (!all(c("class", "length") %in% names(a)))
+    stop("An architecture table needs at least the columns class and length")
+  if (!nrow(a)) return(gene_architecture(character(), integer()))
+  get <- function(col, default) if (col %in% names(a)) a[[col]] else default
+  gene_architecture(a$class, a$length, start_codon = get("start_codon", "ATG"),
+                    status = get("status", "translated"), frame = get("frame", NA_integer_),
+                    may_overlap = get("may_overlap", TRUE))
+}
+
 # Recycle the architecture argument of simGenome to one table per gene.
 architecture_per_gene <- function(architecture, n, tx_names) {
   if (data.table::is.data.table(architecture) || is.data.frame(architecture)) {
-    architecture <- rep(list(data.table::as.data.table(architecture)), n)
+    architecture <- rep(list(revalidate_architecture(architecture)), n)
   } else if (is.character(architecture)) {
     architecture <- lapply(rep_len(architecture, n), architecture_preset)
   } else if (is.list(architecture)) {
@@ -104,7 +121,7 @@ architecture_per_gene <- function(architecture, n, tx_names) {
            length(architecture))
     architecture <- lapply(architecture, function(a) {
       if (is.null(a) || (is.character(a) && !length(a))) return(gene_architecture(character(), integer()))
-      if (is.character(a)) architecture_preset(a) else data.table::as.data.table(a)
+      if (is.character(a)) architecture_preset(a) else revalidate_architecture(a)
     })
   } else stop("architecture must be a gene_architecture() table, a preset name, or a list of them")
   arch <- data.table::rbindlist(architecture, idcol = "gene", fill = TRUE)
@@ -122,7 +139,7 @@ feature_start_window <- function(class, len, L, C, Tn) {
   switch(class,
     uORF   = c(1L, L - len + 1L),
     uoORF  = c(max(1L, L + 7L - len), min(L - 2L, C - 2L - len)),
-    NTE    = rep(L + 1L - len, 2L),
+    NTE    = if (len <= L) rep(L + 1L - len, 2L) else c(1L, 0L),
     intORF = c(L + 4L, C - 2L - len),
     doORF  = c(L + 4L, min(C - 5L, Tn - len + 1L), C - len + 2L),
     dORF   = c(C + 1L, Tn - len + 1L))
@@ -291,7 +308,8 @@ verify_features <- function(tx_seqs, arch, stop_codons, cds_end) {
     !any(substring(x, seq(4L, by = 3L, length.out = n - 2L),
                    seq(6L, by = 3L, length.out = n - 2L)) %in% stop_codons)
   }, logical(1))
-  arch[, verified := start_ok & stop_ok & internal_ok &
+  in_frame <- (arch$tx_end - arch$tx_start + 1L) %% 3L == 0L
+  arch[, verified := start_ok & stop_ok & internal_ok & in_frame &
          (class != "NTE" | tx_end == cds_end[gene])]
   if (any(!arch$verified)) {
     bad <- arch[verified == FALSE]
@@ -307,6 +325,7 @@ classify_orfs <- function(start, end, L, C) {
   data.table::fcase(
     end <= L, "uORF",
     start <= L & end == C & fr == 0L, "NTE",
+    start <= L & end > C, "spanning",
     start <= L, "uoORF",
     start == L + 1L & end == C, "CDS",
     start <= C & end <= C & fr == 0L, "N_truncation",
@@ -437,4 +456,24 @@ export_architecture_features <- function(features, leader_ranges, exon_cds_range
     saveRDS(uorf_ranges, out[["uorfs"]])
   }
   out
+}
+
+# Per-gene build log for an architecture run (same uORF columns as the legacy
+# log, plus all feature classes). Every requested feature was verified, or the
+# build stopped before this point.
+architecture_build_log <- function(features, tx_names) {
+  req <- if (nrow(features)) features[origin == "requested"] else features
+  log <- data.table::data.table(transcript_id = tx_names)
+  if (nrow(req)) {
+    counts <- req[, .(requested_uorfs = sum(class %in% c("uORF", "uoORF")),
+                      requested_features = .N,
+                      classes = paste(paste0(class, ifelse(status == "decoy", "(decoy)", "")),
+                                      collapse = ",")),
+                  by = transcript_id]
+    log <- merge(log, counts, by = "transcript_id", all.x = TRUE, sort = FALSE)
+  } else log[, `:=`(requested_uorfs = 0L, requested_features = 0L, classes = "")]
+  log[is.na(requested_features), `:=`(requested_uorfs = 0L, requested_features = 0L, classes = "")]
+  log[, `:=`(built_uorfs = requested_uorfs, built_features = requested_features,
+             status = "ok", reason = NA_character_)]
+  log[match(tx_names, transcript_id)]
 }

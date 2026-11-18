@@ -228,6 +228,7 @@ simGenome <- function(n = 500,
   }
   build_log <- uorf_build_log(feasibility,
                               if (exists("uorf_ranges", inherits = FALSE)) uorf_ranges else NULL)
+  if (!is.null(architecture)) build_log <- architecture_build_log(features, tx_names)
   if (exact_uorfs && any(build_log$status != "ok")) {
     short <- build_log[status != "ok"]
     text <- paste0(nrow(short), " gene(s) got fewer uORFs than requested: ",

@@ -72,7 +72,8 @@ genome_input_test_controller <- function() {
     check_whole_numbers(max_uorfs, "max_uorfs", min = 0)
     # The shortest possible uORF is a start codon directly followed by a stop.
     check_whole_numbers(uorf_max_length, "uorf_max_length", min = 6, multiple_of = 3)
-    if (min(cds_length) < uorf_max_length + 3) {
+    # The legacy uORF builder needs room in the CDS; architectures check their own windows.
+    if (is.null(architecture) && min(cds_length) < uorf_max_length + 3) {
       stop("every cds_length must be at least uorf_max_length + 3 (here ",
            uorf_max_length + 3, ")", call. = FALSE)
     }
@@ -448,6 +449,14 @@ export_genome_output_controller <- function() {
     }
 
 
+    # A uORF file left by an earlier genome in this folder must not reach the
+    # read simulation (it falls back to this file name); architectures write
+    # their own after this.
+    stale_uorfs <- file.path(out_dir, "true_uORFs.rds")
+    if (!any(max_uorfs > 0) && file.exists(stale_uorfs)) {
+      message("Removing true_uORFs.rds left by an earlier genome in ", out_dir)
+      unlink(stale_uorfs)
+    }
     if (any(max_uorfs > 0)) {
       saveRDS(uorf_ranges, file = file.path(out_dir, "true_uORFs.rds"))
       simGenome <- c(simGenome, uorfs = file.path(out_dir, "true_uORFs.rds"))
