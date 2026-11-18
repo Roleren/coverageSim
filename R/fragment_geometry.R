@@ -381,7 +381,10 @@ build_transcript_models <- function(ranges, fasta_file = NULL,
   models <- lapply(seq_along(ranges), function(i) {
     exons <- ranges[[i]]
     exon_rank <- S4Vectors::mcols(exons)$exon_rank
-    if (!is.null(exon_rank)) exons <- exons[order(exon_rank)]
+    if (!is.null(exon_rank)) {
+      ord <- order(exon_rank)
+      if (!identical(ord, seq_along(exon_rank))) exons <- exons[ord]
+    }
     strand_value <- as.character(unique(GenomicRanges::strand(exons)))
     strand_ok <- length(strand_value) == 1L && strand_value %in% c("+", "-")
     if (check_chromosome) {
@@ -453,6 +456,36 @@ append_rnase_to_simulated_rpf_table <- function(dt_range, rnase_bias,
                                                 transcript_models) {
   reach <- rnase_kernel_reach(rnase_bias)
   if (reach == 0L) return(dt_range)
+  # Preserve split/rbindlist semantics for unusual grouping inputs.
+  if (nrow(dt_range) && !anyNA(dt_range$genes) && !is.factor(dt_range$genes)) {
+    groups <- split(seq_len(nrow(dt_range)), dt_range$genes)
+    indices <- starts <- ends <- positions <- vector("list", length(groups))
+    has_pos <- "region_position" %in% names(dt_range)
+    for (i in seq_along(groups)) {
+      rows <- groups[[i]]
+      first <- rows[1L]
+      last <- rows[length(rows)]
+      model <- transcript_models[[dt_range$transcript_id[first]]]
+      first_tx <- genomic_site_to_transcript(model, dt_range$start[first])
+      last_tx <- genomic_site_to_transcript(model, dt_range$start[last])
+      indices[[i]] <- c(rep(first, reach), rows, rep(last, reach))
+      starts[[i]] <- c(transcript_position_to_genomic(
+        model, seq.int(first_tx - reach, first_tx - 1L)), dt_range$start[rows],
+        transcript_position_to_genomic(model, seq.int(last_tx + 1L, last_tx + reach)))
+      ends[[i]] <- c(head(starts[[i]], reach), dt_range$end[rows],
+                     tail(starts[[i]], reach))
+      if (has_pos) positions[[i]] <- c(
+        seq.int(dt_range$region_position[first] - reach, dt_range$region_position[first] - 1L),
+        dt_range$region_position[rows],
+        seq.int(dt_range$region_position[last] + 1L, dt_range$region_position[last] + reach))
+    }
+    out <- dt_range[unlist(indices, use.names = FALSE)]
+    data.table::set(out, j = "start", value = unlist(starts, use.names = FALSE))
+    data.table::set(out, j = "end", value = unlist(ends, use.names = FALSE))
+    if (has_pos) data.table::set(out, j = "region_position",
+                                  value = unlist(positions, use.names = FALSE))
+    return(out)
+  }
   groups <- split(dt_range, dt_range$genes, keep.by = TRUE)
   data.table::rbindlist(lapply(groups, function(group) {
     model <- transcript_models[[group$transcript_id[1]]]
