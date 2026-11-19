@@ -4,10 +4,12 @@
 \alias{codon_bias_preset}
 \title{Named codon-bias settings}
 \usage{
-codon_bias_preset(name = c("original", "t57"))
+codon_bias_preset(name = c("original", "t57", "realistic"))
 }
 \arguments{
-\item{name}{"original" or "t57" (fixed sharpening, per-genome draws, replicate-shared pauses)}
+\item{name}{"original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses) or "realistic"
+(the t57 base with pause_sd 0.8 and pause_prob 1.0, backclaude t69: lower clumping and replicate frame noise;
+use together with \code{\link{realistic_rfp_settings}}). "t57" is unchanged.}
 }
 \value{
 a list for \code{options(coverageSim.codon_bias = ...)}

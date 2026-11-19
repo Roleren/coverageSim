@@ -68,6 +68,10 @@ Now load bigwig files by:
 
 You now have genome, gtf and tracks loaded in IGV
 
+## Realistic RFP settings (opt-in)
+
+`options(coverageSim.codon_bias = codon_bias_preset("realistic"))` plus `do.call(simNGScoverage, c(list(...), realistic_rfp_settings()))` give lower clumping and replicate frame noise closer to real data (backclaude t69; defaults are unchanged). The learned geometry/frame bias in `inst/extdata/realistic_rfp_geometry_SRR12651187.rds` come from SRR12651187 (6 M read subsample, 2264 canonical transcripts, `learn_fragment_geometry()` / `learn_end_bias(by_length = TRUE)`). The simulated window band is now narrower than real, so a false-flag test on simulated data is conservative; see `docs/REALISTIC_RFP.md`.
+
 ## Learn end biases independently of the simulation inputs
 
 `learn_end_bias()` estimates 5-prime and 3-prime sequence preferences from a
