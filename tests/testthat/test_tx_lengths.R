@@ -1,0 +1,20 @@
+test_that("human_tx_lengths draws valid, realistic region lengths", {
+  set.seed(1)
+  l <- human_tx_lengths(4000)
+  expect_true(all(l$cds_length %% 3 == 0)); expect_true(all(l$cds_length >= 186))
+  expect_true(all(l$leader_length >= 20)); expect_true(all(l$trailer_length >= 20))
+  med <- c(median(l$leader_length), median(l$cds_length + 6), median(l$trailer_length))
+  expect_true(all(abs(med / c(136, 1284, 1018) - 1) < 0.15))
+})
+
+test_that("simGenome keeps the old fixed lengths by default and draws human lengths on request", {
+  dir <- tempfile("txlen_"); dir.create(dir)
+  g <- suppressMessages(simGenome(n = 3, out_dir = dir, debug_on = FALSE))
+  w <- lapply(c("leaders", "cds", "trailers"), function(r) unname(sum(width(ORFik::loadRegion(g["txdb"], r)))))
+  expect_equal(unique(w[[1]]), 140); expect_equal(unique(w[[2]]), 306); expect_equal(unique(w[[3]]), 105)
+  set.seed(2)
+  dir2 <- tempfile("txlen_"); dir.create(dir2)
+  g2 <- suppressMessages(simGenome(n = 5, out_dir = dir2, length_model = "human", debug_on = FALSE))
+  cds2 <- unname(sum(width(ORFik::loadRegion(g2["txdb"], "cds"))))
+  expect_true(length(unique(cds2)) > 1); expect_true(all(cds2 %% 3 == 0))
+})

@@ -8,11 +8,12 @@ simGenome(
   n = 500,
   out_dir = tempdir(),
   genome_name = "Homo_sapiens_dummy",
-  cds_length = rep.int(300, n),
+  cds_length = NULL,
   cds_exons = 2,
   cds_intron_length = sample(c(30, 30), size = n, replace = TRUE),
-  leader_length = rep.int(140, n),
-  trailer_length = rep.int(105, n),
+  leader_length = NULL,
+  trailer_length = NULL,
+  length_model = c("fixed", "human"),
   gene_names = paste0("ENSGTEST1000", seq(n)),
   tx_names = paste0("ENSTTEST1000", seq(n)),
   seqnames = NULL,
@@ -41,7 +42,7 @@ simGenome(
 
 \item{genome_name}{= "Homo_sapiens_dummy",}
 
-\item{cds_length}{= rep.int(300, n). Coding sequence length per gene, in
+\item{cds_length}{= NULL (300 for every gene with length_model "fixed"). Coding sequence length per gene, in
 nucleotides, \strong{without} the start and stop codon, which are added to it
 (300 gives a 306 nt CDS). One whole number per gene, at least 9 and at
 least \code{uorf_max_length} + 3, divisible by 3 since a coding sequence is
@@ -57,17 +58,24 @@ Intron length, including the GT motif at its 5' end; only used (and
 checked) when \code{cds_exons} > 1. Whole numbers of at least 3, divisible
 by 3, one per gene or one value for all genes.}
 
-\item{leader_length}{= rep.int(140, n). Length of the 5' untranslated region
+\item{leader_length}{= NULL (140 with "fixed"). Length of the 5' untranslated region
 ahead of the start codon, one whole number of at least 1 per gene. This is
 where uORFs are placed, so a short leader leaves little room for them.
 The length does not change how many reads the leader gets (that is
 \code{region_proportion} in \code{simCountTablesRegions()}), only how
 densely they lie: the same reads spread over a longer leader.}
 
-\item{trailer_length}{= rep.int(105, n). Length of the 3' untranslated region
+\item{trailer_length}{= NULL (105 with "fixed"). Length of the 3' untranslated region
 after the stop codon, one whole number of at least 0 per gene (0 = the
 transcript ends with the stop codon). As for the leader, the length sets
 the read density there, not the number of reads.}
+
+\item{length_model}{"fixed" (default, the old 300 / 140 / 105 nt for every gene) or
+"human": for each of \code{cds_length}, \code{leader_length} and
+\code{trailer_length} that is not given, draw per-gene log-normal lengths fitted
+to human Ensembl 108 canonical transcripts (\code{\link{human_tx_lengths}}; medians
+136 / 1284 / 1018 nt incl. start and stop codon). Mean transcript is about 3,800 nt
+instead of 551 nt, so genome and read simulation take longer.}
 
 \item{gene_names}{= paste0("ENSGTEST1000", seq(n)),}
 
