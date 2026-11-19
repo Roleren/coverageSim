@@ -72,6 +72,7 @@ test_that("artifact BAM preserves duplicate flags, secondary flags, and NH tags"
   expect_equal(sum(bitwAnd(raw$flag, 1024L) != 0L), 40)
   expect_equal(sum(bitwAnd(raw$flag, 256L) != 0L), 20)
   expect_equal(sum(raw$tag$NH > 1L), 40)
+  expect_true("@PG" %in% names(Rsamtools::scanBamHeader(paths[["default"]])[[1]]$text))
 })
 
 test_that("technical artifact defaults are clean and settings are validated", {

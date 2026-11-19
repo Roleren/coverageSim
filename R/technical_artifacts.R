@@ -143,10 +143,10 @@ simulate_alignment_artifacts <- function(fragment_table, technical_artifacts) {
 }
 
 write_artifact_sam <- function(records, path, seqinfo) {
-  header <- paste(
+  header <- c(paste(
     "@SQ", paste0("SN:", GenomeInfoDb::seqnames(seqinfo)),
     paste0("LN:", GenomeInfoDb::seqlengths(seqinfo)), sep = "\t"
-  )
+  ), simulated_pg_header())
   lines <- paste(
     records$qname, records$flag, records$seqnames, records$start,
     records$mapq, records$cigar, "*", 0L, 0L, records$reference_sequence, "*",

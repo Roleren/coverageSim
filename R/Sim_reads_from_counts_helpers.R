@@ -28,8 +28,9 @@ samFromGAlignment <- function(x, path, seqinfo = GenomeInfoDb::seqinfo(x),
   } else if (identical(sequences, "*") && !is.null(S4Vectors::mcols(x)$sequence)) {
     sequences <- as.character(S4Vectors::mcols(x)$sequence)
   }
-  chr_header <- paste("@SQ", paste0("SN:", seqnames(seqinfo)),
-                      paste0("LN:",seqlengths(seqinfo)), sep = "\t")
+  chr_header <- c(paste("@SQ", paste0("SN:", seqnames(seqinfo)),
+                        paste0("LN:",seqlengths(seqinfo)), sep = "\t"),
+                  simulated_pg_header())
 
   # A library without reads is written as a header only.
   reads <- character(0)
@@ -47,6 +48,16 @@ samFromGAlignment <- function(x, path, seqinfo = GenomeInfoDb::seqinfo(x),
   }
   message("Done")
   return(res)
+}
+
+# @PG header line marking a SAM/BAM file as simulated by coverageSim, as
+# aligners and samtools add their own. It keeps simulated files from being
+# taken for sequenced ones by accident; it does not prevent removing it.
+simulated_pg_header <- function() {
+  paste("@PG", "ID:coverageSim", "PN:coverageSim",
+        paste0("VN:", as.character(utils::packageVersion("coverageSim"))),
+        "DS:simulated Ribo-seq reads, not sequenced; settings in simulation_report.tsv",
+        sep = "\t")
 }
 
 normalize_lib_formats <- function(libFormats) {

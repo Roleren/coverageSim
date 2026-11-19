@@ -131,7 +131,8 @@ test_that("legacy point export keeps the signal as alignment start", {
   )
   sam <- tempfile(fileext = ".sam")
   samFromGAlignment(point, sam, make_bam = FALSE)
-  fields <- strsplit(readLines(sam)[2], "\t", fixed = TRUE)[[1]]
+  lines <- readLines(sam)
+  fields <- strsplit(lines[!startsWith(lines, "@")][1], "\t", fixed = TRUE)[[1]]
   expect_equal(as.integer(fields[4]), 100L)
   expect_equal(fields[6], "28M")
   expect_equal(fields[10], "*")

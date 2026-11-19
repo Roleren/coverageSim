@@ -351,6 +351,8 @@ test_that("simNGScoverage writes SAM output through the format-specific writer",
 
   sam_lines <- readLines(sam_path)
   expect_true(any(grepl("^@SQ\\tSN:", sam_lines)))
+  # Marked as simulated, as aligners mark their own output.
+  expect_true(any(grepl("^@PG\\tID:coverageSim\\tPN:coverageSim\\tVN:.*\\tDS:simulated", sam_lines)))
   expect_gt(sum(!grepl("^@", sam_lines)), 0)
 
   converted_bam <- Rsamtools::asBam(sam_path)
@@ -366,6 +368,10 @@ test_that("simNGScoverage writes BAM output through the format-specific writer",
   expect_match(bam_path, "\\.bam$")
   expect_true(file.exists(bam_path))
   expect_gt(length(Rsamtools::scanBam(bam_path)[[1]]$pos), 0)
+  header <- Rsamtools::scanBamHeader(bam_path)[[1]]$text
+  expect_true("@PG" %in% names(header))
+  expect_true("DS:simulated Ribo-seq reads, not sequenced; settings in simulation_report.tsv" %in%
+                header[["@PG"]])
 })
 
 test_that("simNGScoverage writes optional PCR duplicates as flagged BAM records", {
