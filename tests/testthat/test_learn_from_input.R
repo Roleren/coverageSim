@@ -85,7 +85,7 @@ test_that("learned real-input helpers create simulator-ready objects", {
   )
   expect_gt(nrow(count_table), 0)
 
-  geometry <- learn_fragment_geometry(
+  geometry <- learn_fragment_geometry_from_reads(
     reads,
     fixture$cds,
     site_reference = "a_site",

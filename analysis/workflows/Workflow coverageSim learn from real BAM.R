@@ -162,7 +162,7 @@ geometry_min_per_length <- as.integer(Sys.getenv(
 ))
 
 message("Learning length-specific A-site fragment geometry...")
-fragment_geometry_distribution <- learn_fragment_geometry(
+fragment_geometry_distribution <- learn_fragment_geometry_from_reads(
   reads = reads,
   cds = cds,
   site_reference = "a_site",

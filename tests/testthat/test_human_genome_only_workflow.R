@@ -48,7 +48,7 @@ test_that("real-input workflow learns and reuses A-site fragment geometry", {
   expect_error(parse(workflow), NA)
   script <- readLines(workflow)
 
-  expect_true(any(grepl("learn_fragment_geometry(", script, fixed = TRUE)))
+  expect_true(any(grepl("learn_fragment_geometry_from_reads(", script, fixed = TRUE)))
   expect_true(any(grepl("geometry_distribution = fragment_geometry_distribution", script,
                         fixed = TRUE)))
   expect_true(any(grepl("source = \"learned\"", script, fixed = TRUE)))

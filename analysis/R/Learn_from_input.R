@@ -103,11 +103,11 @@ site_frame_score <- function(cds, points) {
     frame_fraction = if (total > 0) in_frame / total else NA_real_)
 }
 
-learn_fragment_geometry <- function(reads, cds,
-                                    site_reference = c("a_site", "p_site"),
-                                    min_length = 25L, max_length = 34L,
-                                    min_reads_per_length = 100L,
-                                    max_observations = 1e6) {
+learn_fragment_geometry_from_reads <- function(reads, cds,
+                                               site_reference = c("a_site", "p_site"),
+                                               min_length = 25L, max_length = 34L,
+                                               min_reads_per_length = 100L,
+                                               max_observations = 1e6) {
   site_reference <- match.arg(site_reference)
   overlaps <- GenomicRanges::findOverlaps(
     GenomicRanges::granges(reads), unlist(cds, use.names = FALSE),
