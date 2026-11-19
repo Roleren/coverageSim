@@ -35,5 +35,8 @@ Set with \code{options(coverageSim.codon_bias = list(...))}; unset fields keep t
 original behaviour. backclaude t57 (2026-11-19) found that the original per-gene sharpening makes the simulated
 expectation differ from the A-site table in a replicate-shared way (false density flags on null genes) and that
 simulated replicates share less single-codon structure than real ones; \code{codon_bias_preset("t57")} turns on
-the proposed alternative.
+the proposed alternative. backclaude t63 validated the preset values (pause_sd 1.2, pause_prob 0.45: replicate codon
+r 0.52-0.53 at 600-1200 P-sites vs real 0.45-0.54; false density flags 4.0 / 2.6\% vs the TRUE simulated alphas).
+Truth checks must use the alpha vectors the simulator used (they include the pauses), not the global A-site table;
+the pauses are drawn with \code{seed} over the whole gene set, so they depend on gene order and count.
 }

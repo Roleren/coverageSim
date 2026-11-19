@@ -1024,7 +1024,10 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
 #' original behaviour. backclaude t57 (2026-11-19) found that the original per-gene sharpening makes the simulated
 #' expectation differ from the A-site table in a replicate-shared way (false density flags on null genes) and that
 #' simulated replicates share less single-codon structure than real ones; \code{codon_bias_preset("t57")} turns on
-#' the proposed alternative.
+#' the proposed alternative. backclaude t63 validated the preset values (pause_sd 1.2, pause_prob 0.45: replicate codon
+#' r 0.52-0.53 at 600-1200 P-sites vs real 0.45-0.54; false density flags 4.0 / 2.6\% vs the TRUE simulated alphas).
+#' Truth checks must use the alpha vectors the simulator used (they include the pauses), not the global A-site table;
+#' the pauses are drawn with \code{seed} over the whole gene set, so they depend on gene order and count.
 #' @param sharpen "per_gene" (original: exponent scaled per gene by its codon spread) or "fixed" (one exponent).
 #' @param sharpen_power numeric, power applied to the codon weights before sharpening (original 1.25).
 #' @param per_genome_draws logical, draw the per-gene quantile (and pauses) once per genome with \code{seed}, so all
@@ -1052,7 +1055,7 @@ codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_g
 codon_bias_preset <- function(name = c("original", "t57")) {
   switch(match.arg(name),
          original = list(),
-         t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 0.5, pause_prob = 0.15))
+         t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45))
 }
 
 # Run fun(n) with a fixed seed when per-genome draws are on (session RNG state restored), else as is.
