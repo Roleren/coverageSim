@@ -1,11 +1,11 @@
 test_that("realistic preset keeps t57 and only changes the pause settings", {
   t57 <- codon_bias_preset("t57"); real <- codon_bias_preset("realistic")
   expect_equal(t57$pause_sd, 1.2); expect_equal(t57$pause_prob, 0.45)
-  expect_equal(real$pause_sd, 0.8); expect_equal(real$pause_prob, 1.0)
+  expect_equal(real$pause_sd, 1.0); expect_equal(real$pause_prob, 0.7)
   expect_equal(real[setdiff(names(real), c("pause_sd", "pause_prob"))],
                t57[setdiff(names(t57), c("pause_sd", "pause_prob"))])
   withr::local_options(coverageSim.codon_bias = real)
-  expect_equal(codon_bias_options()$pause_sd, 0.8)
+  expect_equal(codon_bias_options()$pause_sd, 1.0)
 })
 
 test_that("realistic_rfp_settings returns the validated t69 arguments", {

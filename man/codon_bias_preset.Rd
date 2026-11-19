@@ -8,7 +8,7 @@ codon_bias_preset(name = c("original", "t57", "realistic"))
 }
 \arguments{
 \item{name}{"original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses) or "realistic"
-(the t57 base with pause_sd 0.8 and pause_prob 1.0, backclaude t69: lower clumping and replicate frame noise;
+(the t57 base with pause_sd 1.0 and pause_prob 0.7, backclaude t75: keeps the t69 clumping/frame gains and the real peak ratio;
 use together with \code{\link{realistic_rfp_settings}}). "t57" is unchanged.}
 }
 \value{

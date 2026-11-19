@@ -1,7 +1,7 @@
 # Realistic RFP simulation settings (opt-in)
 
 ```r
-options(coverageSim.codon_bias = codon_bias_preset("realistic"))   # t57 base, pause_sd 0.8, pause_prob 1.0
+options(coverageSim.codon_bias = codon_bias_preset("realistic"))   # t57 base, pause_sd 1.0, pause_prob 0.7 (t75)
 extra <- realistic_rfp_settings()   # dmn_alpha_scale = 6, learned fragment_geometry (A-site, frame_bias strength 0.25)
 exp <- do.call(simNGScoverage, c(list(simGenome = g, count_table = counts, ...), extra))
 ```
@@ -33,3 +33,18 @@ Gene-level frame variation (real sd 0.06-0.15) is not simulated (sim 0.005).
 | gene-level shared frame sd | 0.016 | 0.005 | 0.06-0.15 |
 
 Caveats: n = 3 seeds; geometry and frame strength chosen on one seed (101, mid depth). Frame 1 vs 2 asymmetry remains.
+
+## t75 update (2026-11-19): pause 1.0 / 0.7
+
+backclaude t75 (300 genes, human lengths, 2 seeds, real references SRR12651187 and SRR32491292, full pshifted reads,
+agreed pausing metric = max / median of occupied frame-0 codon sites, skew over frame-0 sites, zero share; script
+`pause_metric.R` in open_workspace/backclaude/t75/scripts). The preset moved from 0.8 / 1.0 to 1.0 / 0.7:
+
+| setting (+ realistic_rfp_settings) | clump x Poisson | frame sd | false flags | peak 300-999 reads | p95 peak | skew | zero share |
+|---|---|---|---|---|---|---|---|
+| real (2 libraries) | 2.7 | 0.052 | - | 9.0-12.0 | 28-33 | 3.4-3.9 | 0.57-0.60 |
+| 0.8 / 1.0 (old) | 3.46 | 0.072 | - | 6.7 | 11.5 | 1.88 | 0.35 |
+| 1.0 / 0.7 (now) | 4.25 | 0.067 | 0.5-0.6% | 9.0 | 15.9 | 2.62 | 0.37 |
+| 1.2 / 0.7 | 5.91 | - | - | 13.5 | 27.9 | 3.59 | 0.41 |
+
+Still off: p95 peak, skew, zero share (needs replicate-shared zero masks, not yet implemented) and clumping.

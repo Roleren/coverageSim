@@ -1061,7 +1061,7 @@ codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_g
 
 #' Named codon-bias settings
 #' @param name "original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses) or "realistic"
-#'  (the t57 base with pause_sd 0.8 and pause_prob 1.0, backclaude t69: lower clumping and replicate frame noise;
+#'  (the t57 base with pause_sd 1.0 and pause_prob 0.7, backclaude t75: keeps the t69 clumping/frame gains and the real peak ratio;
 #'  use together with \code{\link{realistic_rfp_settings}}). "t57" is unchanged.
 #' @return a list for \code{options(coverageSim.codon_bias = ...)}
 #' @export
@@ -1069,7 +1069,7 @@ codon_bias_preset <- function(name = c("original", "t57", "realistic")) {
   switch(match.arg(name),
          original = list(),
          t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45),
-         realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 0.8, pause_prob = 1.0))
+         realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7))
 }
 
 # Run fun(n) with a fixed seed when per-genome draws are on (session RNG state restored), else as is.
