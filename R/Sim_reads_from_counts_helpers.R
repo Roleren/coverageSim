@@ -743,11 +743,14 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
         30*(codon_variance / codon_extreme)
       }), use.names = FALSE)
 
+      cb <- codon_bias_options()
+      if (cb$sharpen == "fixed") scalers <- rep(1, length(res))
       # Scale signal before auto correlation smearing
       res <- lapply(res, function(x) {
-        x**1.25
+        x**cb$sharpen_power
       })
-      quantile <- sample(seq(7, 9), length(res), TRUE, prob = c(0.4, 0.5, 0.1))/10
+      quantile <- with_gene_seed(cb, length(res), function(n)
+        sample(seq(7, 9), n, TRUE, prob = c(0.4, 0.5, 0.1))/10)
       # Sample number of extreme peaks
       # quants <- unlist(alpha_matrix[, lapply(.SD, function(x) quantile(x, 0.8))],
       #                  use.names = FALSE)
@@ -759,6 +762,18 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
     if (any(c("sin","cos") %in% as.character(quote(1)))) stop("Implement me")
     res <- lapply(res, function(alpha_vec)
       eval(seq_acf))
+  }
+  # Step 1c (opt-in, codon_bias_options(pause_sd > 0)): replicate-shared single-codon pauses, added after the
+  # smoothing so the 19-codon window does not erase them. Drawn with a fixed seed so every library of a genome
+  # gets the same pauses (t57: real replicates share single-codon structure the simulator lacked).
+  if (!is.null(alpha_matrix)) {
+    cb <- codon_bias_options()
+    if (cb$pause_sd > 0) {
+      res <- with_gene_seed(cb, length(res), function(n) lapply(res, function(x) {
+        hit <- stats::runif(length(x)) < cb$pause_prob
+        x * ifelse(hit, exp(stats::rnorm(length(x), 0, cb$pause_sd)), 1)
+      }))
+    }
   }
   # Step 2: move from one weight per codon to one weight per nucleotide. The
   # ribosome translocates a whole codon at a time, so all of a codon's weight is
@@ -1001,4 +1016,50 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
   GenomeInfoDb::Seqinfo(GenomeInfoDb::seqnames(seqinfo), unname(lengths),
                         GenomeInfoDb::isCircular(seqinfo),
                         GenomeInfoDb::genome(seqinfo))
+}
+
+#' Codon-bias options of the simulator (sequence-bias step of simNGScoverage)
+#'
+#' Set with \code{options(coverageSim.codon_bias = list(...))}; unset fields keep the defaults, which reproduce the
+#' original behaviour. backclaude t57 (2026-11-19) found that the original per-gene sharpening makes the simulated
+#' expectation differ from the A-site table in a replicate-shared way (false density flags on null genes) and that
+#' simulated replicates share less single-codon structure than real ones; \code{codon_bias_preset("t57")} turns on
+#' the proposed alternative.
+#' @param sharpen "per_gene" (original: exponent scaled per gene by its codon spread) or "fixed" (one exponent).
+#' @param sharpen_power numeric, power applied to the codon weights before sharpening (original 1.25).
+#' @param per_genome_draws logical, draw the per-gene quantile (and pauses) once per genome with \code{seed}, so all
+#'  libraries share them; FALSE (original) draws per library from the session RNG.
+#' @param pause_sd numeric, sd of the log pause factor per codon (0 = no pauses, original).
+#' @param pause_prob numeric, fraction of codons that get a pause factor.
+#' @param seed integer seed for the per-genome draws.
+#' @return a list of options
+#' @export
+codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_genome_draws = FALSE,
+                               pause_sd = 0, pause_prob = 1, seed = 1L) {
+  def <- list(sharpen = sharpen, sharpen_power = sharpen_power, per_genome_draws = per_genome_draws,
+              pause_sd = pause_sd, pause_prob = pause_prob, seed = seed)
+  set <- getOption("coverageSim.codon_bias", list())
+  bad <- setdiff(names(set), names(def)); if (length(bad)) stop("unknown coverageSim.codon_bias fields: ", toString(bad))
+  def[names(set)] <- set
+  stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1)
+  def
+}
+
+#' Named codon-bias settings
+#' @param name "original" or "t57" (fixed sharpening, per-genome draws, replicate-shared pauses)
+#' @return a list for \code{options(coverageSim.codon_bias = ...)}
+#' @export
+codon_bias_preset <- function(name = c("original", "t57")) {
+  switch(match.arg(name),
+         original = list(),
+         t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 0.5, pause_prob = 0.15))
+}
+
+# Run fun(n) with a fixed seed when per-genome draws are on (session RNG state restored), else as is.
+with_gene_seed <- function(cb, n, fun) {
+  if (!isTRUE(cb$per_genome_draws)) return(fun(n))
+  old <- if (exists(".Random.seed", globalenv())) get(".Random.seed", globalenv()) else NULL
+  on.exit(if (is.null(old)) rm(".Random.seed", envir = globalenv()) else assign(".Random.seed", old, globalenv()))
+  set.seed(cb$seed)
+  fun(n)
 }
