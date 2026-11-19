@@ -10,6 +10,7 @@ codon_bias_options(
   per_genome_draws = FALSE,
   pause_sd = 0,
   pause_prob = 1,
+  zero_prob = 0,
   seed = 1L
 )
 }
@@ -24,6 +25,11 @@ libraries share them; FALSE (original) draws per library from the session RNG.}
 \item{pause_sd}{numeric, sd of the log pause factor per codon (0 = no pauses, original).}
 
 \item{pause_prob}{numeric, fraction of codons that get a pause factor.}
+
+\item{zero_prob}{numeric in [0, 1), probability that a codon site is masked (alpha ~ 0, i.e. no reads) in ALL
+libraries of a genome (0 = off, original). Drawn per genome with \code{seed + 1000} (independent of the pause draws,
+identical across libraries) and applied after the pauses. Unlike \code{dmn_zero_inflation}, which masks each library
+independently, this keeps replicate agreement (backclaude t77). Needs a gene alpha matrix (codon-level bias).}
 
 \item{seed}{integer seed for the per-genome draws.}
 }

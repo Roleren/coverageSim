@@ -786,6 +786,19 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       }))
     }
   }
+  # Step 1d (opt-in, codon_bias_options(zero_prob > 0)): replicate-shared masked codon sites, drawn after the pauses
+  # with seed + 1000 (independent of the pause draws, identical for all libraries of a genome, also when
+  # per_genome_draws is FALSE). Applied to all 3 nucleotides of the codon in the cleanup below, after the RNase smearing
+  # (which would otherwise leak ~10% of the neighbours' weight back onto the masked site), so the site gets no reads.
+  zero_mask <- NULL
+  if (!is.null(alpha_matrix)) {
+    cb <- codon_bias_options()
+    if (cb$zero_prob > 0) {
+      cbz <- modifyList(cb, list(per_genome_draws = TRUE, seed = cb$seed + 1000L))
+      zero_mask <- with_gene_seed(cbz, length(res), function(n) lapply(res, function(x)
+        stats::runif(length(x)) < cb$zero_prob))
+    }
+  }
   # Step 2: move from one weight per codon to one weight per nucleotide. The
   # ribosome translocates a whole codon at a time, so all of a codon's weight is
   # placed on its first nucleotide and the other two are left at zero. Reading
@@ -832,6 +845,14 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       ordinary <- margin + 1L + 3L * seq.int(2L, n_codons - 3L)
       codon_ac_rnase_alphas[margin + 1L] <- start_ratio[i] *
         stats::median(codon_ac_rnase_alphas[ordinary])
+    }
+    if (!is.null(zero_mask)) {
+      n_codons <- length(alpha_matrix[[i]])
+      margin <- (length(codon_ac_rnase_alphas) - 3L * n_codons) %/% 2L
+      first <- margin + 1L + 3L * (which(zero_mask[[i]]) - 1L)
+      # all three nucleotides of the codon: reads are counted per codon site (sum of its 3 nt), and off-frame reads
+      # (frame bias, RNase smearing) land on the codon's 2nd and 3rd nucleotide
+      codon_ac_rnase_alphas[c(first, first + 1L, first + 2L)] <- 0
     }
     codon_ac_rnase_alphas <- codon_ac_rnase_alphas * (alpha_means[i] / mean(codon_ac_rnase_alphas))
     codon_ac_rnase_alphas[codon_ac_rnase_alphas == 0] <- 1e-24
@@ -1045,17 +1066,22 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
 #'  libraries share them; FALSE (original) draws per library from the session RNG.
 #' @param pause_sd numeric, sd of the log pause factor per codon (0 = no pauses, original).
 #' @param pause_prob numeric, fraction of codons that get a pause factor.
+#' @param zero_prob numeric in [0, 1), probability that a codon site is masked (alpha ~ 0, i.e. no reads) in ALL
+#'  libraries of a genome (0 = off, original). Drawn per genome with \code{seed + 1000} (independent of the pause draws,
+#'  identical across libraries) and applied after the pauses. Unlike \code{dmn_zero_inflation}, which masks each library
+#'  independently, this keeps replicate agreement (backclaude t77). Needs a gene alpha matrix (codon-level bias).
 #' @param seed integer seed for the per-genome draws.
 #' @return a list of options
 #' @export
 codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_genome_draws = FALSE,
-                               pause_sd = 0, pause_prob = 1, seed = 1L) {
+                               pause_sd = 0, pause_prob = 1, zero_prob = 0, seed = 1L) {
   def <- list(sharpen = sharpen, sharpen_power = sharpen_power, per_genome_draws = per_genome_draws,
-              pause_sd = pause_sd, pause_prob = pause_prob, seed = seed)
+              pause_sd = pause_sd, pause_prob = pause_prob, zero_prob = zero_prob, seed = seed)
   set <- getOption("coverageSim.codon_bias", list())
   bad <- setdiff(names(set), names(def)); if (length(bad)) stop("unknown coverageSim.codon_bias fields: ", toString(bad))
   def[names(set)] <- set
-  stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1)
+  stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1,
+            def$zero_prob >= 0, def$zero_prob < 1)
   def
 }
 
