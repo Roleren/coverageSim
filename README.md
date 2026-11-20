@@ -78,6 +78,10 @@ You now have genome, gtf and tracks loaded in IGV
 
 `codon_bias_options(tau2 = c(cds = .., utr5 = .., utr3 = ..))` (backclaude E17-S9, default 0 = identical output) adds a replicate-shared log-normal factor per 90-nt block (relative variance tau2, same in all libraries of a genome, independent of the codon pauses), per region. A window-aligned cross-replicate estimator (E7/A `tau2_estimate`) recovers the configured value (0.92-1.06x); windows straddling two blocks see about half, so set tau2 to ~2x the target for unaligned windows. Human values: CDS 0.026-0.039, 5'UTR 0.15-0.19, 3'UTR 0.25-0.45; the simulator needs ~1.5-2x the human value to pass the same band. Truth check: `scripts/s9_truth_check.R`.
 
+## Paralog families and multimappers (opt-in, backclaude E17-S8)
+
+`f <- simParalogFamilies(200, k = 3, divergence = 0.2, shares = "unequal", planted = list(member = 1, factor = 1/3), leak = 0.2)` builds near-identical genes on a codon grid with member-specific positions (fraction `divergence`), true member reads `Y`, an all-mapper track `A` (every multimapper counted in full at each member it maps to) and a unique-mapper track `U` (member-specific reads, plus optional mismatch-tolerant leakage from other members); `paralog_totals(f)` sums per library. Unequal expression, family size and a planted abundance change per condition are configurable. A separate layer, defaults of the existing simulator unchanged. Truth check (naive all-mapper vs U/q vs EM, E7/B rule): `scripts/s8_truth_check.R`.
+
 ## Learn end biases independently of the simulation inputs
 
 `learn_end_bias()` estimates 5-prime and 3-prime sequence preferences from a
