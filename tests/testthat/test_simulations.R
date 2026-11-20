@@ -402,6 +402,38 @@ test_that("simNGScoverage writes optional PCR duplicates as flagged BAM records"
   expect_equal(sum(truth$is_secondary), 0)
 })
 
+test_that("simNGScoverage places opt-in oligo spikes inside the CDS of the right libraries", {
+  set.seed(706)
+  fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")
+  truth_dir <- tempfile("spike-truth-")
+  experiment <- run_simulated_experiment(
+    fixture, seq_bias = NULL, rnase_bias = list(RFP = NULL),
+    auto_correlation = NULL, lib_formats = list(RFP = "bam"),
+    ground_truth = truth_dir,
+    technical_artifacts = list(spike_sites = 2L, spike_library_fraction = 1,
+                               spike_multiplicity = c(1000, 1000))
+  )
+  bams <- ORFik::filepath(experiment, "default")
+  spike_truth <- list.files(truth_dir, pattern = "_spike_truth", full.names = TRUE)
+  expect_length(spike_truth, length(bams))
+  truth <- data.table::fread(spike_truth[1])
+  expect_equal(nrow(truth), 2L)
+  expect_true(all(truth$copies == 1000L))
+  art <- data.table::fread(list.files(truth_dir, pattern = "artifact_truth",
+                                      full.names = TRUE)[1])
+  expect_equal(sum(art$is_spike), 2000L)
+  raw <- Rsamtools::scanBam(bams[[1]], param = Rsamtools::ScanBamParam(what = "seq"))[[1]]
+  seqs <- as.character(raw$seq)
+  # Each spike is one sequence written 1000 times (genome orientation in SAM).
+  expect_equal(sort(as.integer(tail(sort(table(seqs)), 2))), c(1000L, 1000L))
+  # Placed inside the CDS: every spike read overlaps an annotated CDS.
+  cds <- fixture$cds
+  spike_aln <- art[is_spike == TRUE]
+  gr <- GenomicRanges::GRanges(spike_aln$seqnames,
+    IRanges::IRanges(spike_aln$start, width = 1L), spike_aln$strand)
+  expect_true(all(IRanges::overlapsAny(gr, unlist(cds))))
+})
+
 test_that("active end selection runs through MN and DMN with conserved transcript counts", {
   set.seed(71)
   fixture <- make_simulation_fixture(max_uorfs = 0, regions = "cds")

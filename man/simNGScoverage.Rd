@@ -201,7 +201,18 @@ to zero; duplicate_copies and secondary_alignments default to one. Active
 artifacts require RFP output format sam or bam. Extra PCR copies carry flag
 0x400; alternate alignments share the primary QNAME and carry flag 0x100 and
 an NH tag greater than one. Biological fragment counts remain in the regular
-ground truth; the expanded artifact truth is written separately.}
+ground truth; the expanded artifact truth is written separately.
+Oligo spikes (opt-in, off by default; E17-S11, measured in backclaude E6 and
+E16): \code{spike_sites} (integer, default 0 = off) sites per run, each one
+read sequence of a length from \code{spike_lengths} (default 20, 25, 32 nt,
+outside the footprint range) at one position inside the CDS (anywhere on the
+transcript if no CDS is sampled). Each site is carried by each library with
+probability \code{spike_library_fraction} (default 0.25; at least one library)
+with log-uniform copies in \code{spike_multiplicity} (default 1e3 to 1e5).
+Sites are drawn with \code{spike_seed} (default 1) and do not change the other
+draws. Spike reads are primary records without duplicate flag
+(\code{is_spike = TRUE} in the artifact truth); with \code{ground_truth} each
+library also gets a \code{_spike_truth.tsv}.}
 
 \item{ground_truth}{FALSE, TRUE, or a directory path. In simulated-RPF mode, TRUE
 writes one compressed fragment truth table next to each simulated library.}

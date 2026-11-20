@@ -132,3 +132,93 @@ test_that("a secondary alignment on the opposite strand stores the reverse compl
   expect_equal(plus_molecule[strand == "-", reference_sequence], reverse)
   expect_true(all(nchar(records$reference_sequence) == 30L))
 })
+
+# Oligo spikes (E17-S11): one sequence at one position, many copies, odd length.
+spike_fixture_models <- function() {
+  sequence <- paste(rep(c("ACGT", "GGCA", "TTAC"), length.out = 40), collapse = "")
+  plus <- list(transcript_id = "txp", exons = GenomicRanges::GRanges(
+    "chr1", IRanges::IRanges(c(1, 101), c(80, 160)), "+", exon_rank = 1:2),
+    cumulative_start = c(1L, 81L), length = 140L, strand = "+",
+    sequence = substr(sequence, 1, 140))
+  minus <- list(transcript_id = "txm", exons = GenomicRanges::GRanges(
+    "chr2", IRanges::IRanges(201, 340), "-", exon_rank = 1L),
+    cumulative_start = 1L, length = 140L, strand = "-",
+    sequence = substr(sequence, 11, 150))
+  list(txp = plus, txm = minus)
+}
+
+test_that("spikes are off by default and their settings are validated", {
+  defaults <- normalize_technical_artifacts(NULL)
+  expect_equal(defaults$spike_sites, 0L)
+  expect_false(has_active_technical_artifacts(defaults))
+  expect_true(has_active_technical_artifacts(
+    normalize_technical_artifacts(list(spike_sites = 2))))
+  expect_error(normalize_technical_artifacts(list(spike_sites = -1)), "spike_sites")
+  expect_error(normalize_technical_artifacts(list(spike_library_fraction = 0)),
+               "spike_library_fraction")
+  expect_error(normalize_technical_artifacts(list(spike_multiplicity = c(10, 5))),
+               "spike_multiplicity")
+  expect_error(normalize_technical_artifacts(list(spike_lengths = 2.5)), "spike_lengths")
+})
+
+test_that("spike sites are reproducible, inside the CDS and leave the random state alone", {
+  models <- spike_fixture_models()
+  settings <- normalize_technical_artifacts(list(
+    spike_sites = 6L, spike_library_fraction = 0.5, spike_multiplicity = c(1000, 5000)))
+  set.seed(42); before <- .Random.seed
+  a <- draw_spike_sites(models, 4L, settings, cds_start = c(txp = 21L, txm = 31L),
+                        cds_length = c(txp = 90L, txm = 60L))
+  expect_identical(.Random.seed, before)
+  b <- draw_spike_sites(models, 4L, settings, cds_start = c(txp = 21L, txm = 31L),
+                        cds_length = c(txp = 90L, txm = 60L))
+  expect_identical(a, b)
+  expect_equal(data.table::uniqueN(a$spike_id), 6L)
+  expect_true(all(a$fragment_length %in% c(20L, 25L, 32L)))
+  expect_true(all(a$copies >= 1000L & a$copies <= 5000L))
+  expect_true(all(a$library %in% 1:4))
+  cds_end <- c(txp = 110L, txm = 90L)
+  expect_true(all(a$transcript_start >= c(txp = 21L, txm = 31L)[a$transcript_id]))
+  expect_true(all(a$transcript_start + a$fragment_length - 1L <= cds_end[a$transcript_id]))
+  expect_equal(a$sequence, unname(substr(vapply(models[a$transcript_id], `[[`, "", "sequence"),
+                                  a$transcript_start,
+                                  a$transcript_start + a$fragment_length - 1L)))
+})
+
+test_that("spike records are identical reads at one position, flagged in the truth", {
+  models <- spike_fixture_models()
+  spikes <- data.table::data.table(
+    spike_id = c("spike_1", "spike_2"), transcript_id = c("txp", "txm"),
+    transcript_start = c(70L, 5L), fragment_length = c(20L, 25L),
+    sequence = c(substr(models$txp$sequence, 70, 89), substr(models$txm$sequence, 5, 29)),
+    library = 1L, copies = c(1200L, 50L))
+  fixture <- end_selection_fixture()
+  fixture$signal[, score := c(10L, 10L)]
+  fragments <- make_simulated_rpf_fragments(
+    fixture$signal, fixture$models, 8L, list(source = "user", site_offset = 2L))
+  set.seed(5)
+  records <- simulate_alignment_artifacts(fragments, list(spike_sites = 2L),
+                                          spikes = spikes, models = models)
+  expect_equal(attr(records, "diagnostics")[["spike_records"]], 1250)
+  expect_equal(nrow(records), 20 + 1250)
+  spiked <- records[is_spike == TRUE]
+  expect_equal(spiked[, .N, by = fragment_id][order(fragment_id), N], c(1200L, 50L))
+  per_site <- spiked[, .(pos = data.table::uniqueN(start), seq = data.table::uniqueN(sequence),
+                         cig = data.table::uniqueN(cigar)), by = fragment_id]
+  expect_true(all(per_site$pos == 1L & per_site$seq == 1L & per_site$cig == 1L))
+  # The plus-strand spike crosses the exon junction at transcript nt 80/81.
+  expect_equal(spiked[fragment_id == "spike_1", unique(cigar)], "11M20N9M")
+  expect_equal(spiked[fragment_id == "spike_2", unique(start)], 340L - 5L - 25L + 2L)
+  expect_true(all(nchar(spiked$reference_sequence) == spiked$fragment_length))
+  expect_equal(spiked[strand == "-", unique(reference_sequence)],
+               as.character(Biostrings::reverseComplement(
+                 Biostrings::DNAString(spikes$sequence[2]))))
+  expect_false(any(records[is_spike == FALSE, is_duplicate]))
+  expect_equal(data.table::uniqueN(records$qname), nrow(records))
+  # And the records are written as a readable BAM.
+  seqinfo <- GenomeInfoDb::Seqinfo(c("chr1", "chr2"), c(400L, 400L))
+  base <- tempfile("spike-bam-")
+  paths <- write_artifact_library(records, base, "bam", seqinfo)
+  raw <- Rsamtools::scanBam(paths[["default"]],
+                            param = Rsamtools::ScanBamParam(what = "qname"))[[1]]
+  expect_length(raw$qname, 1270L)
+})

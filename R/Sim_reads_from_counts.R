@@ -148,6 +148,17 @@
 #' 0x400; alternate alignments share the primary QNAME and carry flag 0x100 and
 #' an NH tag greater than one. Biological fragment counts remain in the regular
 #' ground truth; the expanded artifact truth is written separately.
+#' Oligo spikes (opt-in, off by default; E17-S11, measured in backclaude E6 and
+#' E16): \code{spike_sites} (integer, default 0 = off) sites per run, each one
+#' read sequence of a length from \code{spike_lengths} (default 20, 25, 32 nt,
+#' outside the footprint range) at one position inside the CDS (anywhere on the
+#' transcript if no CDS is sampled). Each site is carried by each library with
+#' probability \code{spike_library_fraction} (default 0.25; at least one library)
+#' with log-uniform copies in \code{spike_multiplicity} (default 1e3 to 1e5).
+#' Sites are drawn with \code{spike_seed} (default 1) and do not change the other
+#' draws. Spike reads are primary records without duplicate flag
+#' (\code{is_spike = TRUE} in the artifact truth); with \code{ground_truth} each
+#' library also gets a \code{_spike_truth.tsv}.
 #' @param debug_coverage logical, default FALSE. If TRUE, debug steps of coverage calculation,
 #' for parameter errors or just to understand how it all works.
 #' @param dmn_family "dirichlet" (default) or "generalized". Selects the
@@ -345,6 +356,16 @@ simNGScoverage <- function(simGenome,
       warning("Detected CDS ranges that ends on incomplete codon (is not %% 3 == 0 in length")
     }
   }
+  # Oligo spike sites (technical_artifacts$spike_sites > 0, E17-S11): drawn
+  # once for the run with their own seed, shared by the libraries that carry them.
+  spike_table <- NULL
+  if (fragment_mode == "simulated_rpf" && technical_artifacts$spike_sites > 0L) {
+    cds_xy <- if ("cds" %in% regionsToSample) {
+      cds_transcript_coordinates(cds_ranges, models)
+    } else list(start = NULL, length = NULL)
+    spike_table <- draw_spike_sites(models, ncol(count_table), technical_artifacts,
+                                    cds_xy$start, cds_xy$length)
+  }
   # 3. Read the sequences and attach a weight to every position.
   sequence_table_controller()
 
@@ -458,12 +479,14 @@ simNGScoverage <- function(simGenome,
       stop("Active technical_artifacts require RFP output format 'sam' or 'bam'")
     }
     written_files <- if (artifact_output) {
+      lib_spikes <- if (!is.null(spike_table)) spike_table[library == s] else NULL
       artifact_records <- simulate_alignment_artifacts(
-        fragment_table, technical_artifacts
+        fragment_table, technical_artifacts, spikes = lib_spikes, models = models
       )
       write_artifact_ground_truth(
         artifact_records, file_base, ground_truth
       )
+      write_spike_ground_truth(lib_spikes, file_base, ground_truth)
       write_artifact_library(
         artifact_records, file_base, format, output_seqinfo
       )
