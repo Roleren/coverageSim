@@ -705,7 +705,7 @@ apply_autocorrelation_kernel <- function(signal, kernel) {
 # mirror, with nothing in the output to show it.
 sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
                               seq_acf = 9, rnase_acf =
-                                c(0.5, 2, 1, 10, 2, 1, 0.5)) {
+                                c(0.5, 2, 1, 10, 2, 1, 0.5), region = "cds") {
   # The start codon's weight says how often a decoding site sits on the start
   # codon itself. For an A-site table that is almost never, because initiation
   # places the start codon in the P site, not the A site. The chain below cannot
@@ -799,6 +799,20 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
         stats::runif(length(x)) < cb$zero_prob))
     }
   }
+  # Step 1e (opt-in, codon_bias_options(tau2 > 0), backclaude E17-S9): replicate-shared multiplicative window variance. One
+  # log-normal factor (mean 1, relative variance tau2 of the region) per block of tau2_window nt, drawn per genome with
+  # seed + 2000 / 3000 / 4000 (cds / utr5 / utr3; independent of the codon pause and zero draws, identical for all libraries
+  # of a genome, also when per_genome_draws is FALSE), applied to the final per-nucleotide weights below.
+  tau2_blocks <- NULL
+  cbt <- codon_bias_options()
+  tau2_r <- switch(region, cds = cbt$tau2[["cds"]], leader = cbt$tau2[["utr5"]], trailer = cbt$tau2[["utr3"]], 0)
+  if (tau2_r > 0) {
+    sdl <- sqrt(log1p(tau2_r))
+    cbz <- modifyList(cbt, list(per_genome_draws = TRUE,
+                                seed = cbt$seed + c(cds = 2000L, leader = 3000L, trailer = 4000L)[[region]]))
+    tau2_blocks <- with_gene_seed(cbz, length(res), function(n) lapply(seq_len(n), function(i)
+      exp(stats::rnorm(ceiling((max(lengths[i], if (!is.null(alpha_matrix)) 3L * length(alpha_matrix[[i]])) + 2L * cbt$tau2_window) / cbt$tau2_window), 0, sdl) - sdl^2 / 2)))
+  }
   # Step 2: move from one weight per codon to one weight per nucleotide. The
   # ribosome translocates a whole codon at a time, so all of a codon's weight is
   # placed on its first nucleotide and the other two are left at zero. Reading
@@ -853,6 +867,12 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       # all three nucleotides of the codon: reads are counted per codon site (sum of its 3 nt), and off-frame reads
       # (frame bias, RNase smearing) land on the codon's 2nd and 3rd nucleotide
       codon_ac_rnase_alphas[c(first, first + 1L, first + 2L)] <- 0
+    }
+    if (!is.null(tau2_blocks)) {
+      n_nt <- if (!is.null(alpha_matrix)) 3L * length(alpha_matrix[[i]]) else lengths[i]
+      margin <- max((length(codon_ac_rnase_alphas) - n_nt) %/% 2L, 0L)
+      blk <- (seq_along(codon_ac_rnase_alphas) - margin - 1L) %/% cbt$tau2_window
+      codon_ac_rnase_alphas <- codon_ac_rnase_alphas * tau2_blocks[[i]][pmax(blk, 0L) + 1L]
     }
     codon_ac_rnase_alphas <- codon_ac_rnase_alphas * (alpha_means[i] / mean(codon_ac_rnase_alphas))
     codon_ac_rnase_alphas[codon_ac_rnase_alphas == 0] <- 1e-24
@@ -1070,18 +1090,28 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
 #'  libraries of a genome (0 = off, original). Drawn per genome with \code{seed + 1000} (independent of the pause draws,
 #'  identical across libraries) and applied after the pauses. Unlike \code{dmn_zero_inflation}, which masks each library
 #'  independently, this keeps replicate agreement (backclaude t77). Needs a gene alpha matrix (codon-level bias).
+#' @param tau2 replicate-shared relative variance of the per-window expectation (backclaude E17-S9; 0 = off, original).
+#'  A single number applies to all regions, or a named vector with \code{cds}, \code{utr5}, \code{utr3} (missing names = 0).
+#'  Human values (E7/A, E10/C): CDS 0.026 (deep) / 0.039 (mid), 5'UTR 0.15-0.19, 3'UTR 0.25-0.45; the simulator itself
+#'  needs about 1.5-2x the human value to pass the same band. One log-normal factor (mean 1, relative variance
+#'  \code{tau2}) per block of \code{tau2_window} nt, identical in all libraries of a genome (drawn with \code{seed} + 2000 /
+#'  3000 / 4000 per region, independent of the codon pause and zero draws), applied to the final per-nucleotide weights.
+#'  Window-aligned estimators recover \code{tau2}; windows straddling two blocks see about half of it.
+#' @param tau2_window block length in nt of the shared factor, default 90 (30 codons, the window of the density test).
 #' @param seed integer seed for the per-genome draws.
 #' @return a list of options
 #' @export
 codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_genome_draws = FALSE,
-                               pause_sd = 0, pause_prob = 1, zero_prob = 0, seed = 1L) {
+                               pause_sd = 0, pause_prob = 1, zero_prob = 0, tau2 = 0, tau2_window = 90L, seed = 1L) {
   def <- list(sharpen = sharpen, sharpen_power = sharpen_power, per_genome_draws = per_genome_draws,
-              pause_sd = pause_sd, pause_prob = pause_prob, zero_prob = zero_prob, seed = seed)
+              pause_sd = pause_sd, pause_prob = pause_prob, zero_prob = zero_prob, tau2 = tau2,
+              tau2_window = tau2_window, seed = seed)
   set <- getOption("coverageSim.codon_bias", list())
   bad <- setdiff(names(set), names(def)); if (length(bad)) stop("unknown coverageSim.codon_bias fields: ", toString(bad))
   def[names(set)] <- set
+  def$tau2 <- normalize_tau2(def$tau2)
   stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1,
-            def$zero_prob >= 0, def$zero_prob < 1)
+            def$zero_prob >= 0, def$zero_prob < 1, all(def$tau2 >= 0), def$tau2_window >= 3)
   def
 }
 
@@ -1096,6 +1126,14 @@ codon_bias_preset <- function(name = c("original", "t57", "realistic")) {
          original = list(),
          t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45),
          realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7))
+}
+
+# tau2 as a numeric vector named by region (cds, utr5, utr3): one number = all regions, missing names = 0
+normalize_tau2 <- function(x) {
+  regs <- c("cds", "utr5", "utr3")
+  if (is.null(names(x))) return(stats::setNames(rep_len(as.numeric(x), 3L), regs))
+  bad <- setdiff(names(x), regs); if (length(bad)) stop("unknown tau2 regions: ", toString(bad))
+  out <- stats::setNames(numeric(3L), regs); out[names(x)] <- as.numeric(x); out
 }
 
 # Run fun(n) with a fixed seed when per-genome draws are on (session RNG state restored), else as is.

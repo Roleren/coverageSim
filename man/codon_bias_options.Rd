@@ -11,6 +11,8 @@ codon_bias_options(
   pause_sd = 0,
   pause_prob = 1,
   zero_prob = 0,
+  tau2 = 0,
+  tau2_window = 90L,
   seed = 1L
 )
 }
@@ -30,6 +32,16 @@ libraries share them; FALSE (original) draws per library from the session RNG.}
 libraries of a genome (0 = off, original). Drawn per genome with \code{seed + 1000} (independent of the pause draws,
 identical across libraries) and applied after the pauses. Unlike \code{dmn_zero_inflation}, which masks each library
 independently, this keeps replicate agreement (backclaude t77). Needs a gene alpha matrix (codon-level bias).}
+
+\item{tau2}{replicate-shared relative variance of the per-window expectation (backclaude E17-S9; 0 = off, original).
+A single number applies to all regions, or a named vector with \code{cds}, \code{utr5}, \code{utr3} (missing names = 0).
+Human values (E7/A, E10/C): CDS 0.026 (deep) / 0.039 (mid), 5'UTR 0.15-0.19, 3'UTR 0.25-0.45; the simulator itself
+needs about 1.5-2x the human value to pass the same band. One log-normal factor (mean 1, relative variance
+\code{tau2}) per block of \code{tau2_window} nt, identical in all libraries of a genome (drawn with \code{seed} + 2000 /
+3000 / 4000 per region, independent of the codon pause and zero draws), applied to the final per-nucleotide weights.
+Window-aligned estimators recover \code{tau2}; windows straddling two blocks see about half of it.}
+
+\item{tau2_window}{block length in nt of the shared factor, default 90 (30 codons, the window of the density test).}
 
 \item{seed}{integer seed for the per-genome draws.}
 }

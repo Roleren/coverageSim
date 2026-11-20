@@ -545,7 +545,7 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
         # Calculate bias of coverage
         res <- sim_sequence_bias(ideal_cov, lengths,
                                  alpha_matrix, auto_cor,
-                                 rnase_bias[[libtype]])
+                                 rnase_bias[[libtype]], region = region)
         res <- scale_dmn_alpha(res, dmn_alpha_scale)
         sampled_lengths <- lengths(res)
         if (defer_counts) {

@@ -76,6 +76,8 @@ You now have genome, gtf and tracks loaded in IGV
 
 `x <- simIsoformGenes(1000, ref_minor_frac = 0.3)`; `simIsoformReads(x)` gives ribosome (replicates) and RNA reads from one isoform mixture in the codon coordinates of the reference (MANE-like) isoform, with the truth expectation `E_truth` next to the flat reference expectation `E_flat` (`isoform_expected()`); n_iso, reference weight and isoform-specific CDS fraction are resampled from 17,935 real human genes (20.7 % have a reference weight < 0.5). `te_sd` / `rna_weight_sd` make the ribosome and RNA mixtures differ. A separate layer: `simGenome()` / `simNGScoverage()` and all defaults are unchanged. Truth check: `scripts/s7_truth_check.R` (flat vs RNA-mixture vs truth).
 
+`codon_bias_options(tau2 = c(cds = .., utr5 = .., utr3 = ..))` (backclaude E17-S9, default 0 = identical output) adds a replicate-shared log-normal factor per 90-nt block (relative variance tau2, same in all libraries of a genome, independent of the codon pauses), per region. A window-aligned cross-replicate estimator (E7/A `tau2_estimate`) recovers the configured value (0.92-1.06x); windows straddling two blocks see about half, so set tau2 to ~2x the target for unaligned windows. Human values: CDS 0.026-0.039, 5'UTR 0.15-0.19, 3'UTR 0.25-0.45; the simulator needs ~1.5-2x the human value to pass the same band. Truth check: `scripts/s9_truth_check.R`.
+
 ## Learn end biases independently of the simulation inputs
 
 `learn_end_bias()` estimates 5-prime and 3-prime sequence preferences from a
