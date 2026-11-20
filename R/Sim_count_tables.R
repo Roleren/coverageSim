@@ -1,7 +1,17 @@
 #' Create count tables of simulated data
 #'
-#' Follows the rules defined in DESeq paper, using negative binomial distributions.
-#' The true values statistics are found in the meta columns.
+#' Step 2 of the simulation: decide how many reads each gene gets in each sample.
+#'
+#' Two genes that are equally expressed still end up with different counts, and
+#' by more than counting noise alone would explain: the same gene measured in two
+#' biological replicates varies more than repeated counting of one sample would.
+#' A negative binomial describes exactly that -- counting noise plus an extra,
+#' gene-specific spread -- which is why it is the standard model for this kind of
+#' data and what is used here, following the DESeq approach.
+#'
+#' The values actually drawn are kept in the metadata columns, so a later
+#' analysis can be compared against what was really simulated rather than against
+#' what was requested.
 #'
 #' Info about params:\cr
 #' - dispMeanRel: see DESeq2, section: Estimation of dispersions
@@ -11,8 +21,11 @@
 #' @param replicates = 2
 #' @param conditions = c("WT", "Mutant")
 #' @param libtypes = c("RFP", "RNA", "CAGE", "PAS")
-#' @param betaSD integer, default: 1 (log2 value). The standard deviation of dispersion between the conditions.
-#' The higher it is, the lower the correlation between conditions. Sane values: Between 1-3
+#' @param betaSD integer, default: 1 (log2 value). How strongly the conditions
+#' differ from one another: the standard deviation of the true log2 fold change
+#' per gene. At 0 the conditions are identical apart from noise; the higher it
+#' is, the more genes respond, and the less the conditions correlate. Sane
+#' values: between 1 and 3.
 #' @param betaLibSD named numeric vector, default: \code{c("RFP" = 1, "RNA" = 1, "CAGE" = 1, "PAS" = 1)}
 #' Standard deviation of dispersion, relative to the anchor distribution (log2 value).
 #' The higher these values the lower correlation between library types.
@@ -24,7 +37,9 @@
 #' @param plot_PCA logical, default TRUE. Plot PCA plot.
 #' @param print_statistics logical, default TRUE, print count statistics.
 #' @references https://genomebiology.biomedcentral.com/articles/10.1186/s13059-014-0550-8
-#' @return a ranged summarized experiment object
+#' @return a ranged summarized experiment object. The settings this run used
+#'   are kept in \code{metadata(result)$simulation_record} and end up in the
+#'   \code{simulation_report.tsv} written by \code{simNGScoverage()}.
 #' @export
 #' @examples
 #' # Sim 500 genes with: 4 library types, 2 conditions, 2 replicates each
@@ -39,12 +54,16 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
                             dispMeanRel = function(x) 4/x + 0.1, sizeFactors = rep(1, m),
                             plot_PCA = TRUE, print_statistics = TRUE)
 {
+  # Read before any setting is used, so recording cannot change the draws.
+  rng_state <- current_rng_state()
+  supplied <- names(match.call())[-1]
   message("Simulating count tables --")
   stopifnot(m > 0)
   stopifnot(!is.null(names(betaLibSD)))
   betaLibSD <- betaLibSD[libtypes]
   if (!is(n, "numeric")) {
     rowRanges <- n
+    genes_given_as <- describe_object(n)
     n <- length(n)
   } else {
     rowRanges <- GRanges("1", IRanges(start = (1:n - 1) * 100 +
@@ -59,48 +78,52 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
   beta_per_libtype <- matrix(beta_anchor + unlist(lapply(betaLibSD, function(x) rnorm(n, 0, x))), ncol = length(betaLibSD))
   colnames(beta_per_libtype) <- libtypes
 
-  if (length(conditions) > 1) { # The GLM dispersion between conditions
-    beta_between_cond <- rnorm(n, 0, betaSD)
+  n_conditions <- length(conditions)
+  if (n_conditions > 1) { # One effect per non-reference condition
+    beta_between_cond <- matrix(rnorm(n * (n_conditions - 1L), 0, betaSD), nrow = n)
+    colnames(beta_between_cond) <- conditions[-1]
   } else { # Add 0 betaSDs for metacolumns
     beta_between_cond <- NULL
   }
-  dispersion <- dispMeanRel(2^(beta_per_libtype))
+  dispersion <- matrix(dispMeanRel(2^(beta_per_libtype)), nrow = n)
+  stopifnot(ncol(dispersion) == length(libtypes))
+  colnames(dispersion) <- libtypes
   beta <- cbind(beta_per_libtype, beta_between_cond)
 
   colData <- DataFrame(libtype = factor(rep(libtypes, each = replicates*length(conditions)), levels = unique(libtypes)),
                        condition = factor(rep(conditions, each = replicates), levels = unique(conditions)),
                        replicate = as.character(seq(replicates)))
-  # The design matrix
-  x <- if (length(conditions) > 1 | length(libtypes) > 1) {
-    if (length(conditions) > 1 & length(libtypes) > 1){
-      stats::model.matrix.default(~ 0 + libtype + condition, data = colData) #+ colData$libtype:colData$condition
-    } else if (length(libtypes) > 1){
-      stats::model.matrix.default(~ 0 + colData$libtype)
-    } else if (length(conditions) > 1) {
-      stats::model.matrix.default(~ 1 + colData$condition)
-    }
-  }
-  else {
-    if (m == 1) {
-      rep(1, m)
-    } else cbind(rep(1, m), rep(0, m))
-  }
+  x <- count_design_matrix(colData, libtypes, conditions)
+  # Every sample uses the dispersion of its own library type
+  dispersion_per_sample <- dispersion[, match(as.character(colData$libtype), libtypes),
+                                      drop = FALSE]
 
   mu <- t(2^(x %*% t(beta)) * sizeFactors)
   # Size is here a dispersion shape parameter (non integer)
-  countData <- matrix(rnbinom(m * n, mu = mu, size = 1/dispersion),
+  countData <- matrix(rnbinom(m * n, mu = mu, size = 1/dispersion_per_sample),
                       ncol = m)
 
   mode(countData) <- "integer"
   colnames(countData) <- paste(colData$libtype, colData$condition, colData$replicate, sep = "_")
 
   object <- SummarizedExperiment(assays = countData, colData = colData, rowRanges = rowRanges)
-  if (m == 1) beta <- cbind(beta, rep(0, nrow(beta)))
-  trueVals <- DataFrame(trueIntercept = beta[, 1], trueBeta = beta[,2], trueDisp = dispersion)
-  colnames(trueVals)[2 + seq_along(betaLibSD)] <- paste0("trueDisp_", names(betaLibSD))
+  # True input values: the anchor, the condition effect(s) and the dispersions
+  true_condition <- if (n_conditions > 1) {
+    result <- beta_between_cond
+    colnames(result) <- if (n_conditions == 2) "trueBeta" else paste0("trueBeta_", conditions[-1])
+    result
+  } else {
+    matrix(0, nrow = n, ncol = 1, dimnames = list(NULL, "trueBeta"))
+  }
+  true_dispersion <- dispersion
+  colnames(true_dispersion) <- paste0("trueDisp_", libtypes)
+  trueVals <- DataFrame(as.data.frame(
+    cbind(trueIntercept = beta_per_libtype[, 1], true_condition, true_dispersion)
+  ))
   mcols(trueVals) <- DataFrame(type = rep("input", ncol(trueVals)),
-                               description = c("simulated intercept values", "simulated beta values",
-                                               paste0("simulated dispersion values: ", names(betaLibSD))))
+                               description = c(paste0("simulated intercept values (library type ", libtypes[1], ")"),
+                                               rep("simulated condition effect (log2)", ncol(true_condition)),
+                                               paste0("simulated dispersion values: ", libtypes)))
   mcols(object) <- cbind(mcols(object), trueVals)
   message("Count table statistics --")
 
@@ -135,7 +158,16 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
       print(cor(assay(DESeq2::collapseReplicates(d_mat, groupby = d_mat$condition))))
     }
   }
-  return(object)
+  # Recorded last, once every setting this run needs has been used in its own
+  # order; the ones it never needed stay unevaluated.
+  step_record <- make_step_record(
+    "simCountTables", sys.function(), environment(), supplied, rng_state,
+    not_used = c(if (!print) "plot_PCA", if (n_conditions < 2) "betaSD")
+  )
+  if (exists("genes_given_as", inherits = FALSE)) {
+    step_record$settings$n <- genes_given_as
+  }
+  return(add_step_record(object, step_record))
 }
 
 #' Info about params:\cr
@@ -144,14 +176,37 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
 #' @param regionsToSample character vector of regions to sample, default:
 #' c("leader", "cds", "trailer", "uorf")
 #' @param region_proportion named list of mean proportions of sampling per region, default:
-#' \code{list(leader =  list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0),
-#' cds =     list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0),
-#' trailer = list(RFP = 0.1, RNA = 0.3, CAGE = 0, PAS = 1),
-#' uorf =    list(RFP = 0.1, RNA = 0,   CAGE = 0, PAS = 0))}
+#' \code{list(leader =  list(RFP = 0.025, RNA = 0.3, CAGE = 1, PAS = 0),
+#' cds =     list(RFP = 0.938, RNA = 0.4, CAGE = 0, PAS = 0),
+#' trailer = list(RFP = 0.017, RNA = 0.3, CAGE = 0, PAS = 1),
+#' uorf =    list(RFP = 0.02, RNA = 0,   CAGE = 0, PAS = 0))}.
+#' The RFP shares are the medians of 757 human RFP libraries from 74 studies
+#' (leader incl. uORF .043, CDS .934, trailer .017; p10-p90 leader .020-.099,
+#' trailer .012-.040; measured by carina-claude 2026-11-18, accepted by
+#' Carina and Håkon). Use \code{\link{simRDGflow}} to set the uORF/CDS split
+#' from the ribosome flow model instead.
 #' @param sampling named list of sampling modes per library type, default:
 #' c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"), where MN is multinomial, alternative is
 #' DMN (Dirichlet-multinomial)
-#' @return a rangedSummarizedExperiment
+#' @param region_dmn_concentration numeric > 0, default 1. Only affects
+#'   libraries sampled with DMN. Scales the Dirichlet-multinomial's alpha
+#'   vector (the region proportions, which sum to 1, so this value is also
+#'   alpha0 at the default): larger values shrink how much a single draw's
+#'   region proportions can stray from \code{region_proportion} (approaching
+#'   MN as concentration grows), smaller values widen it (more draws put
+#'   most or all reads into a single region). At a low enough concentration
+#'   (roughly below 0.005, depending on \code{region_proportion}), some
+#'   genes' draws hit the degenerate limit where a single random region
+#'   (chosen with probability equal to its own \code{region_proportion}, so
+#'   e.g. cds still "wins" more often than leader/trailer whenever its
+#'   proportion is larger) gets that gene's entire read count -- a real,
+#'   rare, but deliberately extreme scenario for stress-testing downstream
+#'   tools, not something that happens at ordinary concentration values.
+#'   Left at the default 1, this reproduces the original, unscaled DMN
+#'   behavior.
+#' @return a rangedSummarizedExperiment. The settings this run used are added
+#'   to \code{metadata(result)$simulation_record}, after those of
+#'   \code{simCountTables()}.
 #' @export
 #' @examples
 #' # Sim 500 genes with: 4 library types, 2 conditions, 2 replicates each
@@ -165,14 +220,21 @@ simCountTables <- function (n = 500, libtypes = c("RFP", "RNA", "CAGE", "PAS"),
 simCountTablesRegions <- function(count_table = simCountTables(),
                                   regionsToSample = c("leader", "cds", "trailer", "uorf"),
                                   region_proportion =
-                                    list(leader =  list(RFP = 0.05, RNA = 0.3, CAGE = 1, PAS = 0),
-                                         cds =     list(RFP = 0.75, RNA = 0.4, CAGE = 0, PAS = 0),
-                                         trailer = list(RFP = 0.1, RNA = 0.3, CAGE = 0, PAS = 1),
-                                         uorf =    list(RFP = 0.1, RNA = 0,   CAGE = 0, PAS = 0)),
-                                  sampling = c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN")) {
+                                    list(leader =  list(RFP = 0.025, RNA = 0.3, CAGE = 1, PAS = 0),
+                                         cds =     list(RFP = 0.938, RNA = 0.4, CAGE = 0, PAS = 0),
+                                         trailer = list(RFP = 0.017, RNA = 0.3, CAGE = 0, PAS = 1),
+                                         uorf =    list(RFP = 0.02, RNA = 0,   CAGE = 0, PAS = 0)),
+                                  sampling = c(RFP = "MN", RNA = "MN", CAGE = "MN", PAS = "MN"),
+                                  region_dmn_concentration = 1) {
+  # Read before any setting is used, so recording cannot change the draws.
+  rng_state <- current_rng_state()
+  supplied <- names(match.call())[-1]
   stopifnot(is(count_table, "SummarizedExperiment"))
   message("Simulating region count tables -")
   stopifnot(all(sampling %in% c("MN", "DMN")))
+  stopifnot(is.numeric(region_dmn_concentration), length(region_dmn_concentration) == 1L,
+           is.finite(region_dmn_concentration), region_dmn_concentration > 0)
+  count_table_given <- describe_object(count_table)
   prop_regions <- names(region_proportion)
   all_allowed_regions <- c("leader", "cds", "trailer", "uorf")
   stopifnot(all(regionsToSample %in% all_allowed_regions))
@@ -180,6 +242,28 @@ simCountTablesRegions <- function(count_table = simCountTables(),
   prop_mat <- t(matrix(unlist(region_proportion), ncol = length(region_proportion),
                        dimnames = list(names(region_proportion[[1]]), names(region_proportion))))
   stopifnot(all(colSums(prop_mat) == 1))
+  # Only the regions asked for receive reads. Their proportions are rescaled to
+  # sum to 1, so a gene's whole count is distributed over them; sampling all
+  # regions and keeping a subset would silently lose the reads of the others.
+  missing_regions <- setdiff(regionsToSample, rownames(prop_mat))
+  if (length(missing_regions)) {
+    stop("regionsToSample contains regions without a region_proportion: ",
+         paste(missing_regions, collapse = ", "), call. = FALSE)
+  }
+  prop_mat <- prop_mat[regionsToSample, , drop = FALSE]
+  selected_sums <- colSums(prop_mat)
+  libtypes_used <- unique(as.character(colData(count_table)$libtype))
+  empty_libtypes <- intersect(libtypes_used, names(selected_sums)[selected_sums == 0])
+  if (length(empty_libtypes)) {
+    stop("regionsToSample (", paste(regionsToSample, collapse = ", "), ") have ",
+         "proportion 0 for library type(s) ", paste(empty_libtypes, collapse = ", "),
+         ": their reads would have nowhere to go", call. = FALSE)
+  }
+  if (any(abs(selected_sums[libtypes_used] - 1) > 1e-12)) {
+    message("Region proportions rescaled to the selected regions (",
+            paste(regionsToSample, collapse = ", "), ")")
+  }
+  prop_mat <- sweep(prop_mat, 2, ifelse(selected_sums > 0, selected_sums, 1), "/")
 
   assay <- assay(count_table)
   colnames <- colnames(assay)
@@ -194,21 +278,85 @@ simCountTablesRegions <- function(count_table = simCountTables(),
         rmultinom(1, x, prob = prop_mat[,libtype]))))
     } else {
       dt <- t(as.data.table(lapply(assay[,s], function(x)
-        extraDistr::rdirmnom(n = 1, size = x,
-                             alpha = prop_mat[,libtype]))))
+        sample_region_counts_dmn(x, prop_mat[,libtype], region_dmn_concentration))))
     }
-    colnames(dt) <- names(region_proportion)
+    colnames(dt) <- rownames(prop_mat)
     mat <-cbind(mat, dt)
 
   }
   split_mat <- lapply(regionsToSample, function(region) {
-    mat_region <- as.matrix(mat[, colnames(mat) == region])
+    # drop = FALSE: with exactly one gene, mat[, cols] (without it) collapses
+    # to a plain vector; as.matrix() on that then builds a column matrix
+    # (length(cols) x 1) instead of the intended (1 gene x length(cols)
+    # samples), so the colnames<- below failed with "length of 'dimnames'
+    # [2] not equal to array extent".
+    mat_region <- as.matrix(mat[, colnames(mat) == region, drop = FALSE])
     colnames(mat_region) <- colnames
     rownames(mat_region) <- rownames
     mat_region
   })
   assays(count_table) <- c(assays(count_table), split_mat)
   assayNames(count_table) <- c("gene", regionsToSample)
+  # Recorded last, once every setting has been used in its own order. The count
+  # table now carries the region assays, so it is described as it came in.
+  step_record <- make_step_record(
+    "simCountTablesRegions", sys.function(), environment(), supplied, rng_state,
+    summarize_only = "count_table"
+  )
+  step_record$settings$count_table <- count_table_given
   message("Done")
-  return(count_table)
+  return(add_step_record(count_table, step_record))
+}
+
+# Design matrix of the count simulation: one column per library type (or an
+# intercept for a single library type), plus one column per non-reference condition.
+count_design_matrix <- function(colData, libtypes, conditions) {
+  terms <- c(if (length(libtypes) > 1) "0 + libtype" else "1",
+             if (length(conditions) > 1) "condition")
+  stats::model.matrix(stats::as.formula(paste("~", paste(terms, collapse = " + "))),
+                      data = as.data.frame(colData))
+}
+
+# Dirichlet-multinomial draw over regions. Regions with proportion 0 receive no
+# reads (a zero Dirichlet parameter is invalid). `concentration` scales the
+# alpha vector (proportions sum to 1, so it's also the Dirichlet's total
+# concentration alpha0 at the default concentration = 1): larger values
+# shrink the draw-to-draw spread of region proportions towards the plain
+# multinomial (MN) case, smaller values widen it, down to and including the
+# degenerate "one random region gets everything" extreme at a very low
+# concentration (see the fallback below). Left at 1, this is unchanged from
+# the original behavior.
+sample_region_counts_dmn <- function(size, proportions, concentration = 1) {
+  stopifnot(all(is.finite(proportions)), all(proportions >= 0))
+  stopifnot(is.numeric(concentration), length(concentration) == 1L,
+           is.finite(concentration), concentration > 0)
+  counts <- numeric(length(proportions))
+  positive <- proportions > 0
+  if (sum(positive) == 1L) {
+    counts[positive] <- size
+  } else {
+    alpha <- proportions[positive] * concentration
+    drawn <- as.vector(extraDistr::rdirmnom(n = 1, size = size, alpha = alpha))
+    # At a very small concentration (alpha close to 0), rdirmnom()'s
+    # internal Gamma draws can all underflow to exactly 0, so normalizing
+    # them divides 0 by 0 (NaN) instead of drawing a valid outcome. The
+    # mathematically correct limit of a Dirichlet(alpha) draw as
+    # concentration -> 0 is degenerate: all mass falls on a single
+    # category, chosen with probability equal to its own share of
+    # `proportions` among the candidates. Falling back to exactly that
+    # (instead of erroring) lets a deliberately extreme concentration still
+    # express "this gene's reads all land in one region" -- rare, and only
+    # reachable this way, but not a numerical crash -- while still
+    # respecting the same region weighting as everywhere else (e.g. cds
+    # "wins" this degenerate draw more often than leader/trailer whenever
+    # its own proportion is larger, matching ordinary biological
+    # expectation rather than picking a region uniformly at random).
+    if (anyNA(drawn) || any(drawn < 0) || sum(drawn) != size) {
+      winner <- sample.int(length(alpha), 1L, prob = proportions[positive])
+      drawn <- rep(0, length(alpha))
+      drawn[winner] <- size
+    }
+    counts[positive] <- drawn
+  }
+  counts
 }

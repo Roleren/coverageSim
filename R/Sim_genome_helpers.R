@@ -1,21 +1,137 @@
+resolve_simulated_seqnames <- function(n, seqnames, chromosome_layout,
+                                       chromosome_count) {
+  if (!is.null(seqnames)) {
+    return(as.character(seqnames))
+  }
+  if (identical(chromosome_layout, "legacy_one_gene_per_contig")) {
+    return(paste0("chr", seq_len(n)))
+  }
+  check_whole_numbers(chromosome_count, "chromosome_count", min = 1)
+  paste0("chr", seq_len(min(n, as.integer(chromosome_count))))
+}
+
+# TRUE when x is numeric and every value is a finite whole number. Region
+# lengths are counted in nucleotides, so 100.5 has no meaning, and a missing
+# value would otherwise surface much later as an unrelated error.
+is_whole_number_vector <- function(x) {
+  is.numeric(x) && all(is.finite(x)) && all(x == round(x))
+}
+
+# Stop with a message a user can act on unless x is whole numbers of at least
+# `min` (and, if given, divisible by `multiple_of`). With `per_gene = n`, x
+# needs one value per gene (or, with `allow_single`, one value for all genes);
+# without it, x is a single setting.
+check_whole_numbers <- function(x, name, min, per_gene = NULL,
+                                multiple_of = NULL, allow_single = FALSE) {
+  if (is.null(per_gene)) {
+    if (length(x) != 1L) stop(name, " must be one number", call. = FALSE)
+  } else if (!(length(x) == per_gene || (allow_single && length(x) == 1L))) {
+    stop(name, " must have one value per gene (n = ", per_gene, "), not ",
+         length(x), if (allow_single) ", or one value for all genes",
+         call. = FALSE)
+  }
+  valid <- is_whole_number_vector(x) && all(x >= min) &&
+    (is.null(multiple_of) || all(x %% multiple_of == 0))
+  if (!valid) {
+    stop(name, if (is.null(per_gene)) " must be one whole number" else
+                 " must be whole numbers",
+         " of at least ", min,
+         if (!is.null(multiple_of)) paste0(", divisible by ", multiple_of,
+                                           " (whole codons)"),
+         call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 genome_input_test_controller <- function() {
   with(rlang::caller_env(),{
-    # Sanity tests for input
+    # Sanity tests for input. Each check names the setting and the values it
+    # accepts, because a bad value otherwise surfaces much later as an
+    # unrelated internal error.
     message("-- Verifying input")
-    stopifnot(n > 0)
-    stopifnot(all(cds_intron_length%%3 == 0))
-    stopifnot(all(cds_length%%3 == 0))
-    stopifnot(length(strand) == n)
-    stopifnot(length(leader_length) == n)
-    stopifnot(length(trailer_length) == n)
-    stopifnot(length(seqnames) == length(unique(seqnames)))
-    stopifnot(length(gene_names) == length(unique(gene_names)))
-    stopifnot(length(tx_names) == length(unique(tx_names)))
-    stopifnot(length(seqnames) <= n)
-    stopifnot(length(uorfs_can_overlap_cds) == 1)
-    stopifnot(uorfs_can_overlap_cds %in% seq(0, 2))
-    stopifnot(min(cds_length) >= 9 & min(cds_length) > cds_exons & (min(cds_length) >= uorf_max_length + 3))
-    stopifnot(identical(sort(stop_codons), sort(c("TAG", "TGA", "TAA"))))
+    # cds_length excludes the start and stop codon, which are added to it.
+    check_whole_numbers(cds_length, "cds_length", min = 9, per_gene = n,
+                        multiple_of = 3)
+    check_whole_numbers(cds_exons, "cds_exons", min = 1)
+    if (cds_exons >= min(cds_length)) {
+      stop("cds_exons must be smaller than every cds_length", call. = FALSE)
+    }
+    # Introns are only built when the CDS has more than one exon.
+    if (cds_exons > 1) {
+      check_whole_numbers(cds_intron_length, "cds_intron_length", min = 3,
+                          per_gene = n, multiple_of = 3, allow_single = TRUE)
+    }
+    # Every transcript needs at least one leader nucleotide: the start codon
+    # is placed right after the leader, and a transcript that begins with its
+    # start codon has no 5' UTR in which to place uORFs or measure initiation.
+    # A trailer may be empty, because the transcript can end with the stop codon.
+    check_whole_numbers(leader_length, "leader_length", min = 1, per_gene = n)
+    check_whole_numbers(trailer_length, "trailer_length", min = 0, per_gene = n)
+    check_whole_numbers(flank_length, "flank_length", min = 0, per_gene = n,
+                        allow_single = TRUE)
+    check_whole_numbers(max_uorfs, "max_uorfs", min = 0)
+    # The shortest possible uORF is a start codon directly followed by a stop.
+    check_whole_numbers(uorf_max_length, "uorf_max_length", min = 6, multiple_of = 3)
+    # The legacy uORF builder needs room in the CDS; architectures check their own windows.
+    if (is.null(architecture) && min(cds_length) < uorf_max_length + 3) {
+      stop("every cds_length must be at least uorf_max_length + 3 (here ",
+           uorf_max_length + 3, ")", call. = FALSE)
+    }
+    if (!is.logical(uorfs_can_overlap) || length(uorfs_can_overlap) != 1L ||
+        is.na(uorfs_can_overlap)) {
+      stop("uorfs_can_overlap must be TRUE or FALSE", call. = FALSE)
+    }
+    for (setting in c("export_txdb", "debug_on")) {
+      value <- get(setting)
+      if (!is.logical(value) || length(value) != 1L || is.na(value)) {
+        stop(setting, " must be TRUE or FALSE", call. = FALSE)
+      }
+    }
+    if (!(is.logical(uorfs_can_overlap_cds) || is.numeric(uorfs_can_overlap_cds)) ||
+        length(uorfs_can_overlap_cds) != 1L ||
+        !isTRUE(uorfs_can_overlap_cds %in% seq(0, 2))) {
+      stop("uorfs_can_overlap_cds must be 0 (FALSE), 1 (TRUE) or 2", call. = FALSE)
+    }
+    # A uORF that runs into the CDS starts in the leader and ends after the
+    # CDS start codon, out of frame with the CDS: at least 12 nt.
+    if (max_uorfs > 0 && uorfs_can_overlap_cds == 2 && uorf_max_length < 12) {
+      stop("uorfs_can_overlap_cds = 2 (every uORF runs into the CDS) needs ",
+           "uorf_max_length of at least 12", call. = FALSE)
+    }
+    if (length(strand) != n) {
+      stop("strand must have one value per gene (n = ", n, ")", call. = FALSE)
+    }
+    if (!is.character(start_codons) || !length(start_codons) ||
+        any(!grepl("^[ACGT]{3}$", start_codons))) {
+      stop("start_codons must be codons of three letters from A, C, G, T",
+           call. = FALSE)
+    }
+    if (anyDuplicated(seqnames)) stop("seqnames must be unique", call. = FALSE)
+    if (length(seqnames) > n) {
+      stop("there cannot be more seqnames (chromosomes) than genes", call. = FALSE)
+    }
+    if (anyDuplicated(gene_names)) stop("gene_names must be unique", call. = FALSE)
+    if (anyDuplicated(tx_names)) stop("tx_names must be unique", call. = FALSE)
+    if (!is.null(chromosome_weights)) {
+      if (length(chromosome_weights) != length(seqnames) ||
+          any(!is.finite(chromosome_weights)) ||
+          any(chromosome_weights <= 0)) {
+        stop("chromosome_weights must contain one positive finite value per chromosome")
+      }
+    }
+    # A non-empty subset of the three real stop codons -- not just the full
+    # set of all three -- so stop-codon usage bias (real organisms/genes do
+    # prefer some of TAA/TAG/TGA over others) can be simulated. Restricted
+    # to the standard genetic code's own stop codons (not arbitrary
+    # strings) because the CDS/uORF integrity checks below rely on
+    # Biostrings::translate()'s default (standard) genetic code to reliably
+    # recognize them as stops; a different code entirely (e.g. mitochondrial,
+    # where TGA is not a stop) is not supported.
+    if (!length(stop_codons) || anyDuplicated(stop_codons) ||
+        !all(stop_codons %in% c("TAG", "TGA", "TAA"))) {
+      stop("stop_codons must be one or more of TAG, TGA, TAA, without duplicates",
+           call. = FALSE)
+    }
     })
 }
 
@@ -27,7 +143,6 @@ genome_output_test_controller <- function() {
     cds_internal_stops <-  alphabetFrequency(cds_AA)[,"*"]
     if (any(cds_internal_stops != 1) & debug_on){
       warning("malformed CDS created, corner case, rerun to avoid this")
-      if (interactive()) browser()
       print(sum(cds_internal_stops != 1))
       print(cds_AA[cds_internal_stops != 1])
     }
@@ -73,6 +188,115 @@ replace_letters_by_width_group <- function(x, positions, letter = "C") {
   }
 
   result
+}
+
+# Put transcript-oriented CDS sequences (exons in list order, minus-strand exons
+# already reverse-complemented) back into the chromosome sequences.
+write_cds_back_to_chromosomes <- function(chromosome_seqs, cds_grl, cds_seqs,
+                                          genes) {
+  for (i in genes) {
+    exons <- cds_grl[[i]]
+    chromosome <- as.character(GenomicRanges::seqnames(exons))[1]
+    offset <- 0L
+    for (j in seq_along(exons)) {
+      exon_width <- GenomicRanges::width(exons)[j]
+      piece <- Biostrings::subseq(cds_seqs[[i]], offset + 1L, offset + exon_width)
+      if (as.character(GenomicRanges::strand(exons))[j] == "-") {
+        piece <- Biostrings::reverseComplement(piece)
+      }
+      chromosome_seqs[[chromosome]] <- Biostrings::replaceAt(
+        chromosome_seqs[[chromosome]],
+        at = IRanges::IRanges(GenomicRanges::start(exons)[j], width = exon_width),
+        value = piece
+      )
+      offset <- offset + exon_width
+    }
+  }
+  chromosome_seqs
+}
+
+# Write codons (transcript orientation, e.g. "ATG") at the given codon ranges,
+# one GRangesList element per codon with its pieces in transcript order.
+write_codons <- function(chromosome_seqs, codons, values) {
+  for (i in seq_along(codons)) {
+    pieces <- codons[[i]]
+    minus <- as.character(GenomicRanges::strand(pieces))[1] == "-"
+    positions <- unlist(lapply(seq_along(pieces), function(j) {
+      if (minus) seq.int(GenomicRanges::end(pieces)[j], GenomicRanges::start(pieces)[j])
+      else seq.int(GenomicRanges::start(pieces)[j], GenomicRanges::end(pieces)[j])
+    }))
+    letters <- if (minus) chartr("ACGT", "TGCA", values[i]) else values[i]
+    chromosome <- as.character(GenomicRanges::seqnames(pieces))[1]
+    chromosome_seqs[[chromosome]] <- Biostrings::replaceLetterAt(
+      chromosome_seqs[[chromosome]], at = positions, letter = letters
+    )
+  }
+  chromosome_seqs
+}
+
+# "chromosome:position" of every base of the given codons, e.g. all start and
+# stop codons of the uORFs and CDSs.
+codon_base_keys <- function(codons) {
+  codons <- unlist(codons, use.names = FALSE)
+  positions <- IRanges::IntegerList(lapply(seq_along(codons), function(i) {
+    seq.int(GenomicRanges::start(codons)[i], GenomicRanges::end(codons)[i])
+  }))
+  paste(rep(as.character(GenomicRanges::seqnames(codons)), lengths(positions)),
+        unlist(positions), sep = ":")
+}
+
+# Turn every internal stop codon into a non-stop codon by writing a C (G on the
+# minus strand) into one of its bases. The third base is tried first, then the
+# first and second. A base listed in `protected` ("chromosome:position", the
+# start and stop codons of all uORFs and CDSs) is never changed: where uORFs
+# overlap in different frames, a base of one uORF's stop can be part of
+# another uORF's start codon. A C never creates a stop in any frame (TAA, TAG
+# and TGA hold no C). `stop_positions` holds, per uORF, the position of the
+# third base of each internal stop inside the transcript-oriented uORF
+# sequence; the exons of each uORF are given in transcript order.
+replace_uorf_stop_bases <- function(chromosome_seqs, uorf_ranges, stop_positions,
+                                    protected = character()) {
+  for (i in which(lengths(stop_positions) > 0L)) {
+    exons <- uorf_ranges[[i]]
+    on_plus <- as.character(GenomicRanges::strand(exons))[1] != "-"
+    widths <- GenomicRanges::width(exons)
+    exon_start <- cumsum(c(0L, widths))[seq_along(widths)]
+    genomic_base <- function(position) {
+      j <- findInterval(position - 1L, exon_start)
+      inside <- position - exon_start[j] - 1L
+      list(chromosome = as.character(GenomicRanges::seqnames(exons))[j],
+           position = if (on_plus) {
+             GenomicRanges::start(exons)[j] + inside
+           } else {
+             GenomicRanges::end(exons)[j] - inside
+           })
+    }
+    for (third in stop_positions[[i]]) {
+      for (position in c(third, third - 2L, third - 1L)) {
+        base <- genomic_base(position)
+        if (!paste(base$chromosome, base$position, sep = ":") %in% protected) break
+        base <- NULL
+      }
+      # All three bases belong to start or stop codons: create_uORFs() then
+      # drops this uORF.
+      if (is.null(base)) next
+      chromosome_seqs[[base$chromosome]] <- Biostrings::replaceLetterAt(
+        chromosome_seqs[[base$chromosome]], at = base$position,
+        letter = if (on_plus) "C" else "G"
+      )
+    }
+  }
+  chromosome_seqs
+}
+
+uorf_debug_warning <- function(problem) {
+  warning(
+    problem,
+    " Adjust uORF settings (for example longer leaders, fewer uORFs, ",
+    "or disabled overlaps), or set debug_on = FALSE to skip interactive ",
+    "debug mode for these stochastic uORF edge cases.",
+    call. = FALSE
+  )
 }
 
 genome_exon_ranges_controller <- function() {
@@ -131,8 +355,15 @@ genome_exon_flanks_controller <- function() {
     flank_length <- rep_len(flank_length, n)
     if (length(seqnames) < n) { #Decide which genes are on same chromosomes
       gene_seqnames <- seq.int(length(seqnames)) #Make sure each chr get at least 1
-      gene_seqnames <- sort(c(gene_seqnames,
-                              sample(length(seqnames), n - length(seqnames), replace = TRUE)))
+      gene_seqnames <- sort(c(
+        gene_seqnames,
+        sample(
+          length(seqnames),
+          n - length(seqnames),
+          replace = TRUE,
+          prob = chromosome_weights
+        )
+      ))
       seqnames <- seqnames[gene_seqnames]
       dt <- data.table::data.table(seqnames = gene_seqnames, strand, gene_and_intergenic_len)
       dt[, flank3_gene_end := cumsum(gene_and_intergenic_len), by = seqnames]
@@ -184,7 +415,11 @@ make_genome_sequences_controller <- function() {
     if (length(names(chromosome_seqs)) != length(unique(names(chromosome_seqs)))) {
       # Merge the genetic regions of same chromosomes
       chromosome_seqs <- split(chromosome_seqs, names(chromosome_seqs))
-      chromosome_seqs <- DNAStringSet(lapply(a, function(x) unlist(x, use.names = FALSE)))
+      chromosome_seqs <- DNAStringSet(vapply(
+        chromosome_seqs,
+        function(x) paste0(as.character(x), collapse = ""),
+        character(1)
+      ))
       chromosome_seqs <- chromosome_seqs[unique(seqnames)]
     }
   })
@@ -214,7 +449,15 @@ export_genome_output_controller <- function() {
     }
 
 
-    if (max_uorfs > 0) {
+    # A uORF file left by an earlier genome in this folder must not reach the
+    # read simulation (it falls back to this file name); architectures write
+    # their own after this.
+    stale_uorfs <- file.path(out_dir, "true_uORFs.rds")
+    if (!any(max_uorfs > 0) && file.exists(stale_uorfs)) {
+      message("Removing true_uORFs.rds left by an earlier genome in ", out_dir)
+      unlink(stale_uorfs)
+    }
+    if (any(max_uorfs > 0)) {
       saveRDS(uorf_ranges, file = file.path(out_dir, "true_uORFs.rds"))
       simGenome <- c(simGenome, uorfs = file.path(out_dir, "true_uORFs.rds"))
     }
@@ -351,9 +594,11 @@ create_cds_ranges <- function(cds_string, cds_starts, seqnames, strand,
 
   } else {
     cds_string_genomic <- cds_string
-    new_ranges <- IRanges(cds_starts, width = cds_length + 6)
+    # cds_string holds the start codon, the CDS body and the stop codon.
+    cds_width <- width(cds_string)
+    new_ranges <- IRanges(cds_starts, width = cds_width)
     new_ranges[strand == "-"] <- IRanges(end = cds_starts[strand == "-"],
-                                         width = cds_length + 6)
+                                         width = cds_width[strand == "-"])
     cds_ranges <- GRanges(seqnames, new_ranges, strand = strand,
                           source = factor("toy_data"), type = factor("CDS"), score = as.numeric(NA), phase = as.integer(0), # Update phase if needed
                           gene_id = gene_names, gene_version = 1,
@@ -386,6 +631,10 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
   names(leader_string) <- tx_names
   uorf_ranges <- create_uorf_ranges(leader_string, uorf_max_length, max_uorfs,
                                     uorfs_can_overlap_cds, uorfs_can_overlap)
+  if (!sum(lengths(uorf_ranges))) {
+    stop("No gene has room for a uORF (a leader needs at least 4 nt); use ",
+         "longer leaders or max_uorfs = 0", call. = FALSE)
+  }
   # Update leader,cds annotation with uORFs
   message("- Making valid uORFs sequences")
   uorf_groupings <- groupings(uorf_ranges)
@@ -451,81 +700,62 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
   internal_inframe_stops <- 3 + (start(Biostrings::vmatchPattern("*", heads(translate(new_cds_string), -1))) - 1)*3
   if(!all(lengths(internal_inframe_stops) == 0)) {
     temp <- replace_letters_by_width_group(new_cds_string, internal_inframe_stops)
-    a <- cds_grl; names(a) <- NULL
-    b <- temp; b[!strandBool(a)] <- reverseComplement(b[!strandBool(a)])
-    matching <- chmatch(names(chromosome_seqs), seqnamesPerGroup(a, FALSE))
-    chromosome_seqs[ranges(sort(a[matching]))] <- as(unlist(b[matching]), "DNAStringSet")
+    # Write every repaired CDS back, not only the first gene of each chromosome.
+    chromosome_seqs <- write_cds_back_to_chromosomes(
+      chromosome_seqs, cds_grl, temp, which(lengths(internal_inframe_stops) > 0)
+    )
   }
 
-  # Fix uORF Starts that were overwritten
-  uorfs_without_start_sc <- startCodons(uorf_ranges, TRUE)
-  total_start <- alphabetFrequency(translate(chromosome_seqs[uorfs_without_start_sc]))[,"M"]
-  if (any(total_start == 0)) {
-    uorfs_without_start <- uorf_ranges[total_start == 0]
-    seqnames_uorfs_ws <- seqnamesPerGroup(uorfs_without_start, FALSE)
-    for (i in seq_along(uorfs_without_start)) {
-      ir <- ranges(uorfs_without_start[i])
-      names(ir) <- seqnames_uorfs_ws[i]
-      chromosome_seqs[ir][[1]] <- if (strandBool(uorfs_without_start[i])) {
-        replaceLetterAt(chromosome_seqs[uorfs_without_start[i]][[1]],
-                        c(1,2,3),
-                        DNAString(sample(start_codons, 1)))
-      } else {
-        reverseComplement(replaceLetterAt(chromosome_seqs[uorfs_without_start[i]][[1]],
-                                          c(1,2,3),
-                                          DNAString(sample(start_codons, 1))))
-      }
-    }
-  }
-  # Fix uORF Stops that were overwritten
-  uorfs_without_stop_sc <- stopCodons(uorf_ranges, TRUE)
-  total_stops <- alphabetFrequency(translate(chromosome_seqs[uorfs_without_stop_sc]))[,"*"]
-  if (any(total_stops == 0)) {
-    uorfs_without_stop_sc <- uorfs_without_stop_sc[total_stops == 0]
-    seqnames_uorfs_ws <- seqnamesPerGroup(uorfs_without_stop_sc, FALSE)
-    for (i in seq_along(uorfs_without_stop_sc)) {
-      ir <- ranges(uorfs_without_stop_sc[i])
-      names(ir) <- seqnames_uorfs_ws[i]
-      chromosome_seqs[ir][[1]] <- if (strandBool(uorfs_without_stop_sc[i])) {
-        replaceLetterAt(chromosome_seqs[uorfs_without_stop_sc[i]][[1]],
-                        c(1,2,3),
-                        DNAString(sample(stop_codons, 1)))
-      } else {
-        reverseComplement(replaceLetterAt(chromosome_seqs[uorfs_without_stop_sc[i]][[1]],
-                                          c(1,2,3),
-                                          DNAString(sample(stop_codons, 1))))
-      }
-    }
-  }
+  # Fix uORF start and stop codons that were overwritten
+  starts <- startCodons(uorf_ranges, TRUE)
+  wrong <- which(!as.character(chromosome_seqs[starts]) %in% start_codons)
+  chromosome_seqs <- write_codons(chromosome_seqs, starts[wrong],
+                                  sample(start_codons, length(wrong), replace = TRUE))
+  stops <- stopCodons(uorf_ranges, TRUE)
+  wrong <- which(!as.character(chromosome_seqs[stops]) %in% stop_codons)
+  chromosome_seqs <- write_codons(chromosome_seqs, stops[wrong],
+                                  sample(stop_codons, length(wrong), replace = TRUE))
   # Fix uORFs that now got new internal stop codons
-  print("Fixing uORF internal stop --")
+  message("Fixing uORF internal stop --")
   new_uorf_string <- chromosome_seqs[uorf_ranges]
   internal_inframe_stops <- 3 + (start(Biostrings::vmatchPattern("*", heads(translate(new_uorf_string), -1))) - 1)*3
   if(!all(lengths(internal_inframe_stops) == 0)) {
-    hits <- lengths(internal_inframe_stops) > 0
-    temp <- rep(ifelse(strandBool(uorf_ranges[hits]), "C", "G"), lengths(internal_inframe_stops)[hits])
-    temp <- DNAString(paste(strsplit(temp, split = ""), collapse = ""))
-    a <- IRangesList(internal_inframe_stops[hits]); names(a) <- which(hits)
-    a <- pmapFromTranscriptF(a, uorf_ranges); names(a) <- NULL
-    chromosome_seqs[seqnamesPerGroup(a, FALSE)][ranges(a)] <- as(temp, "DNAStringSet")
+    protected <- codon_base_keys(c(
+      startCodons(uorf_ranges, TRUE), stopCodons(uorf_ranges, TRUE),
+      startCodons(cds_grl, TRUE), stopCodons(cds_grl, TRUE)
+    ))
+    chromosome_seqs <- replace_uorf_stop_bases(
+      chromosome_seqs, uorf_ranges, internal_inframe_stops, protected
+    )
   }
-  print("uORF internal stop done")
+  message("uORF internal stop done")
+  # Where an internal stop could not be removed without breaking the start or
+  # stop codon of another uORF or the CDS, or where writing one uORF's codon
+  # broke another's, the uORF is not a valid ORF: drop it from the annotation.
+  invalid <- alphabetFrequency(translate(chromosome_seqs[uorf_ranges]))[, "*"] != 1 |
+    !as.character(chromosome_seqs[startCodons(uorf_ranges, TRUE)]) %in% start_codons |
+    !as.character(chromosome_seqs[stopCodons(uorf_ranges, TRUE)]) %in% stop_codons
+  if (any(invalid)) {
+    message("Dropped ", sum(invalid), " of ", length(uorf_ranges), " uORFs: an ",
+            "overlapping uORF or CDS left it without a valid start or stop codon ",
+            "or with an internal stop")
+    uorf_ranges <- uorf_ranges[!invalid]
+  }
   # uORF sanity tests
   total_stops <- alphabetFrequency(translate(chromosome_seqs[uorf_ranges]))[,"*"]
   start_debug <- FALSE
   if (any(total_stops > 1) & debug_on) {
-    warning("Some uORFs have internal stop codons that could not be fixed!")
-    message("Starting browser debug mode, rerun if you do not care about the details")
+    uorf_debug_warning("Some uORFs have internal stop codons that could not be fixed!")
+    message("Starting browser debug mode because debug_on = TRUE.")
     start_debug <- TRUE
   } else if (any(total_stops == 0) & debug_on) {
-    warning("Some uORFs have no stop codon")
-    message("Starting browser debug mode, rerun if you do not care about the details")
+    uorf_debug_warning("Some uORFs have no stop codon.")
+    message("Starting browser debug mode because debug_on = TRUE.")
     start_debug <- TRUE
   }
   if (start_debug) {
     all <- which(total_stops != 1)
     i <- all[1]
-    if (interactive()) browser()
     print(table(total_stops))
     print(translate(chromosome_seqs[uorf_ranges[i]]))
     print(chromosome_seqs[uorf_ranges[i]])
@@ -538,19 +768,22 @@ create_uORFs <- function(leader_string, chromosome_seqs, n,
 create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
                                uorfs_can_overlap_cds, uorfs_can_overlap) {
   message("- Making valid uORFs ranges")
-  removed_start_area <-
-  uorf_ranges <- IRangesList(lapply(nchar(leader_string), function(size) {
+  # max_uorfs is one number for all genes or one per gene (simGenome(n_uorfs = ...)).
+  max_uorfs <- rep_len(as.integer(max_uorfs), length(leader_string))
+  uorf_ranges <- IRangesList(Map(function(size, gene_max_uorfs) {
     all_uorfs <- IRanges()
-    # Not allow to start overlapping CDS ATG, or inframe of CDS
-    if (uorfs_can_overlap_cds) {
+    # Not allow to start overlapping CDS ATG, or inframe of CDS. Shorter than
+    # 12 nt a uORF cannot reach past the CDS start codon.
+    if (uorfs_can_overlap_cds && uorf_max_length >= 12) {
       allowed_cds_spots <- seq.int(size+7, size + uorf_max_length - 4)
       allowed_cds_spots <- allowed_cds_spots[seq.int(length(allowed_cds_spots)) %% 3 != 0]
     } else allowed_cds_spots <- NULL
 
-    possible_starts <- seq.int(size-3)
+    # A leader shorter than 4 nt leaves no room for a uORF start.
+    possible_starts <- seq_len(max(size - 3L, 0L))
     possible_ends <- c(allowed_cds_spots)
     if (uorfs_can_overlap_cds != 2) possible_ends <- c(possible_starts[-seq.int(5)], possible_ends)
-    for (i in seq(max_uorfs)) {
+    for (i in seq_len(gene_max_uorfs)) {
       if (length(possible_starts) == 0 | length(possible_ends) == 0) break;
       end <- ifelse(length(possible_ends) == 1, possible_ends, sample(possible_ends, size = 1))
       pstart_all <- seq.int(end-2, max(min(possible_starts), end - uorf_max_length), by = -3)[-1]
@@ -580,12 +813,14 @@ create_uorf_ranges <- function(leader_string, uorf_max_length, max_uorfs,
       } else c(invalid_start[-c(1,2,3,4,5)], seq(end+1, end+5))
       possible_ends <- possible_ends[!(possible_ends %in% invalid_end)]
       possible_starts <- possible_starts[!(possible_starts %in% invalid_start)]
+      # Leader used up: nothing left to place (avoids min()/max() of an empty vector).
+      if (length(possible_starts) == 0L) break
       possible_ends <- possible_ends[(possible_ends > min(possible_starts) + 5) &
                                        (possible_ends < max(possible_starts) + uorf_max_length -1)]
     }
     #i; all_uorfs; cat("start:"); possible_starts; cat("stop:");possible_ends; end
     all_uorfs
-  }))
+  }, nchar(leader_string), max_uorfs))
   return(uorf_ranges)
 }
 
@@ -613,13 +848,14 @@ distribute_reads_to_uORFs <- function(region_counts, assay, uorf_ranges, uorf_pr
   uorf_tx_names <- txNames(uorf_ranges)
 
   prob <- if (uorf_prop_mode == "character") {
-    if (uorf_prop_within_gene == "uniform") {
-      a <- rep(1, length(uorf_ranges))
-      names(a) <- uorf_tx_names
+    # "uniform": every uORF of a gene gets the same share;
+    # "length": the share is proportional to the uORF length.
+    a <- if (uorf_prop_within_gene == "uniform") {
+      rep(1, length(uorf_ranges))
     } else {
-      stop("Not implemented yet")
-      lapply(unique(uorf_tx_names), function(x) rmultinom(1, region_counts[x], rep(1, sum(uorf_tx_names == x))))
+      as.numeric(widthPerGroup(uorf_ranges, FALSE))
     }
+    names(a) <- uorf_tx_names
     a
   } else uorf_prop_within_gene
   allocated_counts <- numeric(length(uorf_tx_names))

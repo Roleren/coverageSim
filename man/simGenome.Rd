@@ -8,19 +8,26 @@ simGenome(
   n = 500,
   out_dir = tempdir(),
   genome_name = "Homo_sapiens_dummy",
-  cds_length = rep.int(300, n),
+  cds_length = NULL,
   cds_exons = 2,
   cds_intron_length = sample(c(30, 30), size = n, replace = TRUE),
-  leader_length = rep.int(140, n),
-  trailer_length = rep.int(105, n),
+  leader_length = NULL,
+  trailer_length = NULL,
+  length_model = c("fixed", "human"),
   gene_names = paste0("ENSGTEST1000", seq(n)),
   tx_names = paste0("ENSTTEST1000", seq(n)),
-  seqnames = list(paste0("chr", seq(n)), paste0("chr", seq(23)))[[1]],
+  seqnames = NULL,
+  chromosome_layout = c("compact", "legacy_one_gene_per_contig"),
+  chromosome_count = 24L,
+  chromosome_weights = NULL,
   flank_length = 305,
   strand = c("+", sample(c("+", "-"), n - 1, replace = TRUE)),
   start_codons = "ATG",
   stop_codons = c("TAG", "TGA", "TAA"),
   max_uorfs = 1,
+  n_uorfs = NULL,
+  on_infeasible = c("error", "warning"),
+  architecture = NULL,
   uorfs_can_overlap = TRUE,
   uorfs_can_overlap_cds = TRUE,
   uorf_max_length = 60,
@@ -29,56 +36,155 @@ simGenome(
 )
 }
 \arguments{
-\item{n}{= 500, integer, number of genes to create}
+\item{n}{= 500. Number of genes to create, one whole number of at least 1.}
 
 \item{out_dir}{= "~/Desktop/benchmark_ORFPrediction",}
 
 \item{genome_name}{= "Homo_sapiens_dummy",}
 
-\item{cds_length}{= rep.int(300, n)}
+\item{cds_length}{= NULL (300 for every gene with length_model "fixed"). Coding sequence length per gene, in
+nucleotides, \strong{without} the start and stop codon, which are added to it
+(300 gives a 306 nt CDS). One whole number per gene, at least 9 and at
+least \code{uorf_max_length} + 3, divisible by 3 since a coding sequence is
+read in whole codons.}
 
-\item{cds_exons}{= 2,}
+\item{cds_exons}{= 2. How many exons the coding sequence is split into, one
+whole number of at least 1 and smaller than every \code{cds_length}.
+More than one means reads can cross a splice junction, which is what
+exercises the spliced-alignment handling downstream.}
 
-\item{cds_intron_length}{= sample(c(30, 30), size = n, replace = TRUE),
-only used any cds_exons > 1. Is the size excluding the '5 GT motif.}
+\item{cds_intron_length}{= sample(c(30, 30), size = n, replace = TRUE).
+Intron length, including the GT motif at its 5' end; only used (and
+checked) when \code{cds_exons} > 1. Whole numbers of at least 3, divisible
+by 3, one per gene or one value for all genes.}
 
-\item{leader_length}{= rep.int(140, n),}
+\item{leader_length}{= NULL (140 with "fixed"). Length of the 5' untranslated region
+ahead of the start codon, one whole number of at least 1 per gene. This is
+where uORFs are placed, so a short leader leaves little room for them.
+The length does not change how many reads the leader gets (that is
+\code{region_proportion} in \code{simCountTablesRegions()}), only how
+densely they lie: the same reads spread over a longer leader.}
 
-\item{trailer_length}{= rep.int(105, n),}
+\item{trailer_length}{= NULL (105 with "fixed"). Length of the 3' untranslated region
+after the stop codon, one whole number of at least 0 per gene (0 = the
+transcript ends with the stop codon). As for the leader, the length sets
+the read density there, not the number of reads.}
+
+\item{length_model}{"fixed" (default, the old 300 / 140 / 105 nt for every gene) or
+"human": for each of \code{cds_length}, \code{leader_length} and
+\code{trailer_length} that is not given, draw per-gene log-normal lengths fitted
+to human Ensembl 108 canonical transcripts (\code{\link{human_tx_lengths}}; medians
+136 / 1284 / 1018 nt incl. start and stop codon). Mean transcript is about 3,800 nt
+instead of 551 nt, so genome and read simulation take longer.}
 
 \item{gene_names}{= paste0("ENSGTEST1000", seq(n)),}
 
 \item{tx_names}{= paste0("ENSTTEST1000", seq(n)),}
 
-\item{seqnames}{= \code{list(paste0("chr", seq(n)), paste0("chr", seq(23)))[[1]]},}
+\item{seqnames}{Character vector of chromosome names. When NULL,
+the default compact layout uses up to \code{chromosome_count} chromosomes.}
 
-\item{flank_length}{= 305,}
+\item{chromosome_layout}{Either \code{"compact"} (the default), which places
+multiple genes on chromosomes, or
+\code{"legacy_one_gene_per_contig"}, which recreates the historical
+\code{chr1}, ..., \code{chrN} layout. Only used when \code{seqnames} is NULL.}
 
-\item{strand}{= c("+", sample(c("+", "-"), n-1, replace = T)),}
+\item{chromosome_count}{= 24. Maximum number of chromosomes in the default
+compact layout, one whole number of at least 1.}
 
-\item{start_codons}{= "ATG",}
+\item{chromosome_weights}{Optional sampling weights controlling how genes are
+distributed among chromosomes. Must have one positive value per chromosome.}
 
-\item{stop_codons}{= c("TAG", "TGA", "TAA"),}
+\item{flank_length}{= 305. Genomic sequence added on either side of each
+gene: whole numbers of at least 0, one per gene or one value for all
+genes. Reads never fall here, but the space means a gene is not flush
+against a chromosome edge, where coordinate handling behaves differently.}
 
-\item{max_uorfs}{= 1,}
+\item{strand}{= c("+", sample(c("+", "-"), n-1, replace = T)). Which strand
+each gene sits on. The default deliberately mixes both: minus-strand genes
+run against the genome's coordinates and are a common source of
+off-by-one and reverse-complement errors, so a test genome should contain
+them.}
 
-\item{uorfs_can_overlap}{= TRUE,}
+\item{start_codons}{= "ATG". Codon(s) that open a coding sequence: three
+letters from A, C, G, T each.}
 
-\item{uorfs_can_overlap_cds}{= TRUE, logical/integer, 0/FALSE is no overlap, 1/TRUE is can overlap
-, 2 is must overlap.}
+\item{stop_codons}{= c("TAG", "TGA", "TAA"), a non-empty subset (no
+duplicates) of the standard genetic code's three stop codons. Use a
+smaller subset to simulate stop-codon usage bias (e.g. \code{"TGA"}
+alone). Codons outside \code{c("TAG", "TGA", "TAA")} are not supported:
+the CDS/uORF integrity checks rely on \code{Biostrings::translate()}'s
+default (standard) genetic code to recognize stops, so simulating an
+organism/organelle with a different genetic code (e.g. mitochondrial,
+where TGA is not a stop) is out of scope here.}
 
-\item{uorf_max_length}{= 60}
+\item{max_uorfs}{= 1. Upper limit on how many upstream ORFs a gene may get,
+one whole number of at least 0 (0 = no uORFs). A gene can get fewer when
+its leader has no room left; a leader shorter than 4 nt gets none. If no
+gene has room for a uORF, simGenome() stops with an error.
+These are short reading frames in the leader that ribosomes can translate
+before reaching the main coding sequence, so they carry real signal and are
+not merely decoration.}
 
-\item{export_txdb}{logical, default TRUE. Export TxDb object of gtf. Highly adviced,
-but for testing you can turn it of to speed up raw output.}
+\item{n_uorfs}{NULL (default) or the exact number of uORFs per gene: one whole
+number for all genes or one per gene. Unlike \code{max_uorfs} (an upper limit;
+a gene silently gets fewer when its leader has no room), every gene must then get
+exactly this many: genes that cannot (leader too short for the request under the
+overlap settings) stop the run before any sequence is made, and genes that end up
+with fewer after the random placement are reported (see \code{on_infeasible}).
+Overrides \code{max_uorfs}.}
 
-\item{debug_on}{logical, default TRUE. Activate debug on suspected error. This can happen
+\item{on_infeasible}{"error" (default) or "warning": what to do when the
+\code{n_uorfs} request cannot be met, before building (impossible) or after it
+(placement left a gene short). Either way the details are in the build log.
+A per-gene build log (requested and built uORFs, leader length, minimum leader
+needed, status and reason) is always written next to the genome as
+\code{<genome_name>_build_log.tsv} and returned as \code{"build_log"}.}
+
+\item{architecture}{NULL (default) or the extra translons each gene should
+contain, built exactly and verified: a \code{\link{gene_architecture}} table
+(all genes), a preset name from \code{\link{architecture_preset}}, or a list
+with one of these (or NULL) per gene. Classes: uORF, uoORF, NTE, intORF, doORF,
+dORF; each translated or a decoy. Positions are chosen before any sequence is
+made, so impossible requests stop early with the gene and reason. Every other
+ORF found in the final transcripts is labelled as an incidental decoy. Writes
+\code{true_features.rds} (genomic GRangesList, one element per feature) and
+\code{<genome_name>_features.tsv}; translated uORFs and uoORFs are also written
+to \code{true_uORFs.rds} so the read simulation uses them. All translated
+extra features of any class are read through the single "uorf" region of
+\code{simCountTablesRegions()}: its share (\code{region_proportion$uorf}) is the
+TOTAL for all extra translons of a gene, split between them uniformly, by length,
+or by \code{simRDGflow()}; \code{annotate_ground_truth()} maps reads back to features. Cannot be combined
+with \code{max_uorfs} or \code{n_uorfs}.}
+
+\item{uorfs_can_overlap}{= TRUE. Whether two uORFs of the same gene may share
+sequence: TRUE or FALSE.}
+
+\item{uorfs_can_overlap_cds}{= TRUE. Whether a uORF may run into the CDS:
+0 (FALSE) = no overlap, 1 (TRUE) = may overlap, 2 = must overlap.
+Such a uORF starts in the leader and ends after the CDS start codon, so it
+needs \code{uorf_max_length} of at least 12: with 2 a smaller value
+stops with an error, with 1 all uORFs then stay in the leader.}
+
+\item{uorf_max_length}{= 60. Longest a uORF may be, in nucleotides
+including its start and stop codon: one whole number of at least 6 (a
+start codon directly followed by a stop), divisible by 3. Real
+uORFs are short, which is part of what distinguishes them from a second
+coding sequence.}
+
+\item{export_txdb}{TRUE or FALSE, default TRUE. Export TxDb object of gtf.
+Highly advised, but for testing you can turn it off to speed up raw output.}
+
+\item{debug_on}{TRUE or FALSE, default TRUE. Activate debug on suspected error. This can happen
 on uORF sampling, with corner case created transcripts. Useful to debug to understand why it failed.
 If you are not interested and you believe settings are valid, just rerun until it works.}
 }
 \value{
 a named character vector with paths to output files.
 genome (fasta), transcriptome (gtf), transcript Database (TxDb) and uorfs (rds)
+The settings this run used, and the random state it started from, are saved
+next to the genome as \code{<genome_name>_simulation_record.rds};
+\code{simNGScoverage()} adds them to its \code{simulation_report.tsv}.
 }
 \description{
 Step 1 of 4 in the package. Create a genome of 'n' genes distributed on

@@ -1,3 +1,9 @@
+#' Confusion table of predicted versus true calls
+#'
+#' @param predicted logical (or coercible) vector of predicted calls
+#' @param true logical vector of true labels, same length
+#' @return a data.table with one logical column each for TP, FP, FN and TN
+#'  (one row per call); the counts and percentages are printed
 #' @export
 truth_table <- function(predicted, true) {
   stopifnot(length(predicted) == length(true))
@@ -44,6 +50,14 @@ mcc <- function(TP, FP, TN, FN, convert_negative_to_zero = FALSE) {
   }
 }
 
+#' Summarise truth tables per group and melt them for plotting
+#'
+#' @param dt a data.table with columns TP, FP, FN, TN, simulation, classifier
+#'  and the grouping column \code{col}
+#' @param col name of the grouping column (e.g. "codons")
+#' @param grp_cols grouping columns kept in the output
+#' @param cutoff groups with more members than this are dropped
+#' @return a long data.table of rates per group
 #' @export
 meltTruthTableGroup <- function(dt, col = "codons", grp_cols = c("simulation", "classifier"), cutoff = Inf) {
   dt_temp <- dt[, .(TP = sum(TP), FP = sum(FP), FN = sum(FN), TN = sum(TN), size = .N),

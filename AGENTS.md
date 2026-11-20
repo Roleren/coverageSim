@@ -10,6 +10,7 @@ Simulation project for ribo-seq coverage analysis.
 
 ## General workflow
 - First, catch up on the latest local changes and understand the repository.
+- Check the git-ignored `.agents/` folder for an `onboarding.md` file and read it first if it exists.
 - Always inspect related code before making assumptions or edits.
 - If necessary, follow dependencies deeper (e.g. ORFik / Bioconductor) before making changes.
 
@@ -23,6 +24,11 @@ Simulation project for ribo-seq coverage analysis.
 - identify which capability is missing (filesystem, network, system libs, etc.)
 - propose a sandbox-compatible alternative if possible
 - ask for confirmation before proceeding
+- Exception for read-only repository inspection: if a sandbox command fails
+  because the sandbox itself cannot start, Codex may retry the same command
+  outside the sandbox without asking for confirmation. This exception applies
+  only to commands that read local repository state and do not modify files,
+  install software, access the network, or contact external services.
 
 ## Running code
 - Always use `devtools::load_all()` when working with coverageSim.
@@ -55,3 +61,16 @@ env -u LC_ALL R --vanilla -q -e 'devtools::load_all("."); testthat::test_dir("te
 - Prefer correctness over speed.
 - Verify assumptions by reading code before modifying anything.
 - Do not declare a task complete without tests that demonstrate correctness.
+
+## Local notes
+Personal notes, collaboration conventions and TODOs live in the git-ignored `.agents/` folder. Read it first if present.
+
+## Independent review with Codex
+After implementing a phase (code written, tests passing) and before handing it over, run Codex as a second reviewer:
+
+```bash
+git add -N <new files>   # otherwise untracked files are missing from the diff
+git diff | codex exec "Review this diff from an independent reviewer's perspective: correctness, edge cases, missing test coverage, and anything that looks unintentional. Do not modify any files. List concrete findings ranked by severity; if you find nothing, say so explicitly."
+```
+
+Keep the default read-only sandbox. Report Codex's findings in the summary and fix each one or explain why it does not apply. For a phase spanning several commits use `git diff <base>...HEAD`.

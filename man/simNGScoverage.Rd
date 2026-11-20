@@ -13,23 +13,34 @@ simNGScoverage(
   exp_save_dir = ORFik::config()["exp"],
   transcripts = names(count_table),
   ideal_coverage = list(leader = list(CAGE = quote(c(1, rep.int(0, x - 1)))), cds =
-    list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))), trailer = list(PAS =
-    quote(c(rep.int(0, x - 1), 1))), uorf = list(RFP = quote(rep.int(c(1, 0, 0),
-    length.out = x)))),
-  rnase_bias = list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = rnase_models(), CAGE =
-    rnase_models(), PAS = rnase_models()),
+    list(RFP = quote(rep(c(1, 0, 0), length.out = x))), trailer = list(PAS =
+    quote(c(rep.int(0, x - 1), 1))), uorf = list(RFP = quote(rep(c(1, 0, 0), length.out =
+    x)))),
+  rnase_bias = list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = 1, CAGE = 1, PAS = 1),
   auto_correlation = list(cds = list(RFP = shapes(9)), uorf = list(RFP = shapes(9))),
-  read_lengths_per = list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1),
+  read_lengths_per = list(RFP = 25:36, RNA = 100, CAGE = 1, PAS = 1),
   sampling = list(leader = list(RFP = "MN", RNA = "MN"), cds = list(RFP = "DMN"), trailer
     = list(RFP = "MN"), uorf = list(RFP = "DMN")),
+  dmn_alpha_scale = NULL,
   libClasses = list(RFP = "GRanges", RNA = "GAlignment", CAGE = "GRanges", PAS =
     "GRanges"),
   libFormats = list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"),
-  seq_bias = load_seq_bias(),
+  seq_bias = "AUTO",
   true_uorf_ranges = "AUTO",
   uorf_prop_within_gene = "uniform",
   validate = TRUE,
-  debug_coverage = FALSE
+  fragment_mode = c("simulated_rpf", "legacy_point", "physical"),
+  fragment_geometry = list(source = "default", site_reference = "a_site", distribution =
+    NULL, boundary_action = "renormalize", five_prime_bias = list(source = "none"),
+    three_prime_bias = list(source = "none"), codon_bias = list(source = "none"),
+    frame_bias = list(source = "none")),
+  technical_artifacts = NULL,
+  ground_truth = FALSE,
+  debug_coverage = FALSE,
+  dmn_family = c("dirichlet", "generalized"),
+  dmn_gdm_scale = 1,
+  dmn_zero_inflation = 0,
+  cores = 1
 )
 }
 \arguments{
@@ -53,24 +64,59 @@ cds =          list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))),
 trailer =      list(PAS = quote(c(rep.int(0, x -1), 1))),
 uorf =         list(RFP = quote(rep.int(c(1, 0, 0), length.out = x))))}
 
-\item{rnase_bias}{= list(leader =  list(RFP = 1, RNA = 1, CAGE = quote(1/seq.int(x)), PAS = quote(1/seq.int(x, 1))),
-cds =     list(RFP = c(5, 2, 1), RNA = 1, CAGE = quote(1/seq.int(x)), PAS = quote(1/seq.int(x, 1))),
-trailer = list(RFP = 1, RNA = 1, CAGE = quote(1/seq.int(x)), PAS = quote(1/seq.int(x, 1))),
-uorf = list(RFP = c(5, 2, 1), RNA = 1, CAGE = quote(1/seq.int(x)), PAS = quote(1/seq.int(x, 1))))}
+\item{rnase_bias}{Named list with **one numeric kernel per library type** (not
+per region), default \code{list(RFP = c(0.5, 2, 1, 10, 2, 1, 0.5), RNA = 1,
+CAGE = 1, PAS = 1)}. The kernel models RNase digestion smearing reads across
+the footprint boundary: it is convolved with a region's nucleotide-level
+Dirichlet alpha vector, so it only affects regions sampled with
+\code{sampling = "DMN"}. Use \code{1} or \code{NULL} to disable smearing for
+a library type (not \code{0}, which would make every smoothed weight zero).
+Each kernel must be numeric, of **odd** length (it is applied center-aligned,
+and the row layout is extended by \code{floor(length/2)} per side), finite,
+non-negative, and have at least one positive weight; it need not be
+symmetric -- the default deliberately is not, which is what produces the
+roughly 5:1:2 ratio between the three reading frames. Quoted expressions are
+not
+evaluated for this argument (unlike \code{ideal_coverage} and
+\code{auto_correlation}) and are rejected.
+
+Note that a region's row layout is extended by the **RFP** kernel's reach
+(\code{floor(length/2)}) alone, because only RFP is modeled as having
+RNase-footprint smearing. Consequently a *different* library type that samples
+a DMN region with a kernel whose length differs from RFP's is currently not
+supported and fails with a row-count mismatch.
+
+Unlike \code{ideal_coverage}, \code{auto_correlation}, \code{sampling} and
+\code{simCountTablesRegions()}'s \code{region_proportion}, this argument is
+*not* nested by region. A region-nested list is rejected, because it would
+otherwise silently disable the RNase kernel entirely.}
 
 \item{auto_correlation}{= list(leader = list(RFP = 1, RNA = 1, CAGE = 1, PAS = 1),
-cds = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1),
-trailer = list(RFP = 1, RNA = 1, CAGE = 1, PAS = 1),
-uorf = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1))
-- Alternative: abs(cos(x)) + abs(cos(x*b[i])),
- where b is an internal value sampled per gene in interval 3 to 15.}
+   cds = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1),
+   trailer = list(RFP = 1, RNA = 1, CAGE = 1, PAS = 1),
+   uorf = list(RFP = quote(abs(cos(seq(0, pi*(x/30), pi/30))) + 0.1), RNA = 1, CAGE = 1, PAS = 1))
+   - Alternative: abs(cos(x)) + abs(cos(x*b[i])),
+    where b is an internal value sampled per gene in interval 3 to 15.
+A numeric odd-length kernel can also be supplied, including the learned
+kernel returned by code{learn_end_bias()$auto_correlation}.}
 
-\item{read_lengths_per}{a list, default: list(RFP = 27:29, RNA = 100, CAGE = 1, PAS = 1)}
+\item{read_lengths_per}{a list, default: list(RFP = 25:36, RNA = 100, CAGE = 1, PAS = 1).
+RFP lengths are weighted by the pooled length distribution of 702 human RFP
+runs (mode 30-31 nt; \code{measured_rfp_length_weights()}).}
 
 \item{sampling}{a list, default: list(leader = list(RFP = "MN", RNA = "MN"),
 cds =    list(RFP = "DMN"),
 trailer =list(RFP = "MN"),
 uorf =   list(RFP = "DMN"))}
+
+\item{dmn_alpha_scale}{NULL or a positive numeric scalar. NULL (default) uses
+a unique dmn_alpha_scale stored in seq_bias, as produced by learn_end_bias(),
+and otherwise falls back to 1. The value multiplies the final Step-4
+Dirichlet alpha vector immediately before sampling. Values below 1 increase
+position-to-position variation, producing more isolated peaks and zeros;
+values above 1 make coverage smoother. Relative expected coverage and the
+total read count per transcript region remain unchanged. This parameter
+affects only regions using \code{sampling = "DMN"}.}
 
 \item{libClasses}{= list(RFP = "GRanges", RNA = "GAlignment", CAGE = "GRanges", PAS = "GRanges")}
 
@@ -78,9 +124,18 @@ uorf =   list(RFP = "DMN"))}
 list(RFP = "ofst", RNA = "ofst", CAGE = "ofst", PAS = "ofst"). Alternatives:
 "sam" and "bam".}
 
-\item{seq_bias}{the sequence bias used for simulation, default:
-load_seq_bias(), the Ribosome profiling estimates from Amino acid dwell times from
-P-site shifted reads from library "R2" from the coverageSim paper. Specifically it is:
+\item{seq_bias}{the sequence bias used for simulation, default \code{"AUTO"}:
+resolved to \code{load_seq_bias(shift = fragment_geometry$site_reference)},
+the motif-wise median of the amino-acid alpha estimates measured from the ten
+bundled human Ribo-seq libraries R1--R10, shifted to match whichever ribosome
+site \code{fragment_geometry$site_reference} uses to place simulated-RPF
+fragments around each nucleotide's signal position. Only resolved this way
+for \code{fragment_mode = "simulated_rpf"} (including the deprecated
+\code{"physical"} alias), the only mode where \code{site_reference} has any
+effect; for \code{"legacy_point"}, \code{"AUTO"} always resolves to the
+P-site table regardless of \code{fragment_geometry}. Pass a table (or
+\code{NULL}, to disable codon bias) explicitly to opt out of this
+matching. Otherwise it is:
 a data.table with correctly named columns:
  "seq", "alpha"\cr
  the column seq (Amino acid, 1 letter per)
@@ -88,13 +143,19 @@ a data.table with correctly named columns:
  In addition iMethionin
  (start codon) can be differentiated by setting seq = "#" and stop codon
  as seq = "*". Gives ability to scale these two important regions seperatly
- from other codons.}
+ from other codons.
+ If a \code{variable} column is present, it must identify exactly one profile.
+ Tables returned by \code{load_seq_bias(bias = "all")} must be subset first.}
 
 \item{true_uorf_ranges}{= "AUTO". Load from uorf string in 'simGenome'.}
 
 \item{uorf_prop_within_gene}{= "uniform". How should counts for uORF be
 distributed. Alternatives: 'length' (length biased), or user specified
-list of numeric values for all ORFs.}
+list of numeric values for all ORFs. A gene can have uORF reads in the count
+table but no uORF in the genome (e.g. its leader was too short to hold one); those
+reads are left out, reported in a message and listed in
+`<sample>_dropped_reads.tsv` with region "uorf" and reason "no uORF in the
+genome".}
 
 \item{validate}{logical, TRUE, check that experiment was correctly made.
 Set to false if you know it won't and you will fix it later. This happens
@@ -103,11 +164,107 @@ in a folder with other libraries you made
 earlier, so then only validate when you create the ORFik experiment after the
 last sample is made.}
 
+\item{fragment_mode}{RFP representation. `"simulated_rpf"` (default) creates
+complete simulated transcript-derived RPFs; `"legacy_point"` preserves the
+historical behavior where the simulated signal position is the read start.
+The former name `"physical"` remains as a deprecated compatibility alias.}
+
+\item{fragment_geometry}{Named list controlling simulated RPFs. Supports
+`source` (`"default"`, `"user"`, or `"learned"`), `site_reference`
+(`"p_site"` or `"a_site"`; also selects the default \code{seq_bias} table's
+site convention, see \code{seq_bias} above), a joint `distribution` with fragment_length,
+site_offset, and probability columns, and `boundary_action`. The default
+`"renormalize"` keeps, near a transcript end, only the fragment lengths and
+offsets that fit inside the transcript. A position where none of the
+configured lengths and offsets fits (a ribosome too close to the end for the
+footprints the distribution allows) gets no reads: they
+go to the other positions of the same region of the same transcript, and if
+no position of that region with reads has room, they are left out. Reads left out are
+reported in a message and in `<sample>_dropped_reads.tsv` next to the
+library file, with reason "no position with reads and room for a whole
+fragment". `"error"` stops at the first such position.
+End-bias sources may also be `"user"` or `"learned"` with a table of
+`kmer`, `weight`, and optionally `fragment_length`; use
+\code{make_synthetic_end_bias()} to create a simple explicit profile.
+Each end accepts `strength` (default 1): 0 disables it, 0.5 weakens it,
+and values above 1 strengthen it using weight^strength. Active end biases
+jointly weight sites and fragment geometry before the final read draw,
+preserving each transcript/region read budget and the input site support.
+Length-specific `codon_bias` and `frame_bias` fields use the same source and
+strength convention; their tables contain codon/frame, fragment_length and
+weight columns. They act during physical-fragment selection and can be
+learned with `learn_end_bias(by_length = TRUE)`.}
+
+\item{technical_artifacts}{Optional list controlling alignment artifacts in
+simulated RPF SAM/BAM output: duplication_rate and multimapping_rate default
+to zero; duplicate_copies and secondary_alignments default to one. Active
+artifacts require RFP output format sam or bam. Extra PCR copies carry flag
+0x400; alternate alignments share the primary QNAME and carry flag 0x100 and
+an NH tag greater than one. Biological fragment counts remain in the regular
+ground truth; the expanded artifact truth is written separately.
+Oligo spikes (opt-in, off by default; E17-S11, measured in backclaude E6 and
+E16): \code{spike_sites} (integer, default 0 = off) sites per run, each one
+read sequence of a length from \code{spike_lengths} (default 20, 25, 32 nt,
+outside the footprint range) at one position inside the CDS (anywhere on the
+transcript if no CDS is sampled). Each site is carried by each library with
+probability \code{spike_library_fraction} (default 0.25; at least one library)
+with log-uniform copies in \code{spike_multiplicity} (default 1e3 to 1e5).
+Sites are drawn with \code{spike_seed} (default 1) and do not change the other
+draws. Spike reads are primary records without duplicate flag
+(\code{is_spike = TRUE} in the artifact truth); with \code{ground_truth} each
+library also gets a \code{_spike_truth.tsv}.}
+
+\item{ground_truth}{FALSE, TRUE, or a directory path. In simulated-RPF mode, TRUE
+writes one compressed fragment truth table next to each simulated library.}
+
 \item{debug_coverage}{logical, default FALSE. If TRUE, debug steps of coverage calculation,
 for parameter errors or just to understand how it all works.}
+
+\item{dmn_family}{"dirichlet" (default) or "generalized". Selects the
+distribution family used for Step-4 DMN sampling, see \code{rgdirmnom()}.
+At the default, sampling is byte-for-byte identical to always calling
+\code{extraDistr::rdirmnom()} directly (no behavior change). Applies to
+regions using \code{sampling = "DMN"}, including libraries with an active
+\code{fragment_geometry} bias under \code{fragment_mode = "simulated_rpf"}
+(those draw latent site probabilities via \code{draw_site_probabilities()}
+rather than integer counts via \code{rgdirmnom()} directly, but use the
+same family/scale/zero-inflation logic).}
+
+\item{dmn_gdm_scale}{positive numeric, default 1 (the standard Dirichlet
+distribution; same distribution as \code{dmn_family = "dirichlet"}, but
+not the same random numbers for a given seed). Only used when
+\code{dmn_family = "generalized"} (but always validated); see
+\code{rgdirmnom()}. Unlike \code{dmn_alpha_scale}, values away from 1
+reshape the expected per-position coverage rather than only its variance,
+and the effect is large: at 2.2 the tallest position of a realistic profile
+keeps under half of its expected share, and coverage drifts from the start
+of each region towards its end. Keep it at 1 unless that reshape is the
+goal; the Details section of \code{rgdirmnom()} gives the numbers.}
+
+\item{dmn_zero_inflation}{numeric in [0, 1), default 0 (off). Probability
+that an eligible Step-4 position is forced to a structural zero for a
+given simulated library, layered on top of the usual DMN sampling; see
+\code{rgdirmnom()}. Preserves the total read count per transcript region.}
+
+\item{cores}{positive whole number, default 1. How many samples are
+simulated at the same time, each in its own process. Every sample draws from
+its own random numbers, derived from the seed of the run, so a given seed
+gives the same result for any number of cores. Each process needs about as
+much memory as a run with one core, so the peak memory grows with
+\code{cores}. Values above the number of samples are lowered to it. On
+Windows, which cannot start processes this way, only 1 is possible; larger
+values fall back to 1 with a warning.}
 }
 \value{
-an \code{\link[ORFik]{experiment}}
+an \code{\link[ORFik]{experiment}}. Next to the libraries in
+  \code{out_dir} it also writes \code{simulation_report.tsv}: one row per
+  setting of every step that made this run (\code{simGenome()},
+  \code{simCountTables()}, \code{simCountTablesRegions()} and this function),
+  with its value, whether it was the default, and the versions of R, the
+  computing packages and the coverageSim commit (and whether there were unsaved
+  changes). \code{simulation_report.rds} holds the same plus the full values and
+  the random state each step started from. A step that was not run through
+  coverageSim (for example a genome made elsewhere) is listed as having no record.
 }
 \description{
 Simulated read coordinates from count tables given a genome.

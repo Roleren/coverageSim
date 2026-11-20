@@ -1,0 +1,317 @@
+# Create a simulated Ribo-seq data set
+
+# STEPS:
+# Step 1: what the genes look like
+# Step 2: how much each gene is expressed
+# Step 3: where counts go within each transcript
+# Step 4: what the read coverage looks like
+
+# Create simulated data set: 3000 genes, A-site shifted, high-depth different gene counts
+
+devtools::load_all(".")
+
+library(ORFik)
+library(SummarizedExperiment)
+
+n_genes <- as.integer(Sys.getenv("COVSIM_DATASET_N_GENES", unset = "3000"))
+if (is.na(n_genes) || n_genes < 1L) {
+  stop("COVSIM_DATASET_N_GENES must be a positive integer")
+}
+
+bias_profile <- Sys.getenv(
+  "COVSIM_DATASET_BIAS_PROFILE", unset = "median"
+)
+allowed_bias_profiles <- c("median", "start_codon", "stop_codon", "similar")
+if (!bias_profile %in% allowed_bias_profiles) {
+  stop(
+    "COVSIM_DATASET_BIAS_PROFILE must select one profile: ",
+    paste(allowed_bias_profiles, collapse = ", ")
+  )
+}
+bias_profile_id <- c(
+  median = "median", start_codon = "R2", stop_codon = "R1", similar = "R10"
+)[[bias_profile]]
+
+dmn_alpha_scale <- as.numeric(Sys.getenv(
+  "COVSIM_DATASET_DMN_ALPHA_SCALE", unset = "1"
+))
+if (length(dmn_alpha_scale) != 1L || !is.finite(dmn_alpha_scale) ||
+    dmn_alpha_scale <= 0) {
+  stop("COVSIM_DATASET_DMN_ALPHA_SCALE must be one finite number greater than zero")
+}
+
+# Library preparation favours some bases at a fragment's ends, so the observed
+# ends are not a faithful record of where the enzyme cut. By default no such
+# bias is simulated. COVSIM_DATASET_END_BIAS_FIT names a fit saved by
+# learn_end_bias() from a real library; its 5' and 3' tables are then applied
+# as measured. COVSIM_DATASET_END_BIAS_STRENGTH raises every weight of both
+# tables to that power: 1 keeps the measured bias, 3 makes it three times as
+# strong on the log scale, for asking whether an analysis tool can see it.
+end_bias_settings <- function(fit_path, strength_text) {
+  strength <- suppressWarnings(as.numeric(strength_text))
+  if (length(strength) != 1L || !is.finite(strength) || strength < 0) {
+    stop("COVSIM_DATASET_END_BIAS_STRENGTH must be one finite number of zero or more")
+  }
+  if (!nzchar(fit_path)) {
+    return(list(five_prime_bias = list(source = "none"),
+                three_prime_bias = list(source = "none"),
+                strength = strength))
+  }
+  if (!file.exists(fit_path)) {
+    stop("COVSIM_DATASET_END_BIAS_FIT does not exist: ", fit_path)
+  }
+  fit <- readRDS(fit_path)
+  if (!inherits(fit, "covsim_end_bias_fit")) {
+    stop("COVSIM_DATASET_END_BIAS_FIT must be a fit saved from learn_end_bias()")
+  }
+  scaled <- function(bias) {
+    list(source = bias$source, table = bias$table, strength = strength)
+  }
+  list(five_prime_bias = scaled(fit$five_prime_bias),
+       three_prime_bias = scaled(fit$three_prime_bias),
+       strength = strength)
+}
+end_bias_fit_path <- Sys.getenv("COVSIM_DATASET_END_BIAS_FIT", unset = "")
+end_bias <- end_bias_settings(
+  end_bias_fit_path,
+  Sys.getenv("COVSIM_DATASET_END_BIAS_STRENGTH", unset = "1")
+)
+end_bias_strength <- end_bias$strength
+five_prime_bias <- end_bias$five_prime_bias
+three_prime_bias <- end_bias$three_prime_bias
+
+run_tag <- Sys.getenv(
+  "COVSIM_DATASET_RUN_TAG",
+  unset = paste0(
+    n_genes, "_genes_simulated_rpf_asite_", bias_profile
+  )
+)
+out_root <- Sys.getenv(
+  "COVSIM_DATASET_OUT_ROOT",
+  unset = file.path(
+    Sys.getenv("COVSIM_DATA_ROOT", unset = file.path(dirname(getwd()), "coverageSim_data")),
+    "runs"
+  )
+)
+out_base <- file.path(out_root, run_tag)
+
+dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(out_base, "genome"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(out_base, "reads"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(out_base, "experiment"), recursive = TRUE, showWarnings = FALSE)
+
+# Record which code produced this run. Without it, a stored result cannot be
+# traced back to the source that made it -- and because load_all() above reads
+# the working directory, unsaved edits count too, which is what this records.
+write_code_version(out_base)
+
+seed <- as.integer(Sys.getenv("COVSIM_DATASET_SEED", unset = "42"))
+
+# Fragment lengths and read depth are the two settings most often varied between
+# runs, so they are read from the environment rather than edited in place.
+#
+# The default range is wider than one ribosome's footprint on purpose. A real
+# library does not produce a single length: digestion leaves a spread, and
+# default_fragment_distribution() weights that spread with a bell curve centred
+# on 29 nt. The range also matters for the offset, because the distance from a
+# fragment's 5' end to the decoding site grows with length -- 14 nt up to 27 nt,
+# 15 nt for 28 to 30, 16 nt above that. A run restricted to 28:30 therefore has
+# one offset for every fragment and cannot show that relationship at all.
+read_length_range <- Sys.getenv("COVSIM_DATASET_READ_LENGTHS", unset = "26:33")
+read_lengths <- eval(parse(text = read_length_range))
+if (!is.numeric(read_lengths) || !length(read_lengths) ||
+    any(!is.finite(read_lengths)) || any(read_lengths < 1)) {
+  stop("COVSIM_DATASET_READ_LENGTHS must evaluate to positive numbers, e.g. 26:33")
+}
+read_lengths <- as.integer(read_lengths)
+
+# Mean expression on a log scale; it sets how many reads each transcript gets.
+# 6 leaves roughly 125 reads per transcript at 300 genes, which is enough to see
+# periodicity but too thin for choros, which trains on the 250 densest
+# transcripts. 10 gives roughly 970.
+intercept_mean <- as.numeric(Sys.getenv("COVSIM_DATASET_INTERCEPT_MEAN",
+                                        unset = "6"))
+if (!is.finite(intercept_mean)) {
+  stop("COVSIM_DATASET_INTERCEPT_MEAN must be one finite number")
+}
+set.seed(seed)
+
+data.table::fwrite(
+  data.table::data.table(
+    setting = c(
+      "n_genes", "seed", "bias_profile", "bias_profile_id", "dmn_alpha_scale",
+      "read_lengths", "intercept_mean", "end_bias_fit", "end_bias_strength"
+    ),
+    value = c(n_genes, seed, bias_profile, bias_profile_id, dmn_alpha_scale,
+              paste(range(read_lengths), collapse = ":"), intercept_mean,
+              if (nzchar(end_bias_fit_path)) end_bias_fit_path else "none",
+              end_bias_strength)
+  ),
+  file.path(out_base, "simulation_settings.tsv"),
+  sep = "\t"
+)
+
+n_reps  <- 2
+conds   <- c("WT", "KO")
+
+leader_length  <- rep(120, n_genes)
+cds_length     <- rep(600, n_genes)
+trailer_length <- rep(120, n_genes)
+cds_intron_len <- rep(90, n_genes)
+
+sim_genome <- simGenome(
+  n = n_genes,
+  out_dir = file.path(out_base, "genome"),
+  genome_name = "human_flavoured_sim",
+  chromosome_layout = "compact",
+  chromosome_count = 24L,
+  leader_length = leader_length,
+  cds_length = cds_length,
+  trailer_length = trailer_length,
+  cds_exons = 2,
+  cds_intron_length = cds_intron_len,
+  # uORFs are deliberately enabled so their geometry and 10% signal fraction
+  # are exercised in both the smoke test and the full run.
+  max_uorfs = 2,
+  uorfs_can_overlap = TRUE,
+  uorfs_can_overlap_cds = 0,
+  uorf_max_length = 90,
+  export_txdb = TRUE,
+  debug_on = FALSE
+)
+
+cds <- ORFik::loadRegion(sim_genome["txdb"], "cds")
+
+gene_counts <- simCountTables(
+  n = cds,
+  libtypes = "RFP",
+  conditions = conds,
+  replicates = n_reps,
+  # Higher depth for RUST: 4 was too sparse after transcript QC.
+  # Keeping the variance/effect settings unchanged isolates read-depth effects.
+  interceptMean = intercept_mean,
+  interceptSD = 1.5,
+  betaSD = 0.2,
+  plot_PCA = FALSE,
+  print_statistics = TRUE
+)
+
+sample_totals <- colSums(SummarizedExperiment::assay(gene_counts))
+print(sample_totals)
+
+region_counts <- simCountTablesRegions(
+  count_table = gene_counts,
+  regionsToSample = c("leader", "cds", "trailer", "uorf"),
+  region_proportion = list(
+    leader  = list(RFP = 0.03),
+    cds     = list(RFP = 0.84),
+    trailer = list(RFP = 0.03),
+    uorf    = list(RFP = 0.10)
+  )
+)
+
+region_totals <- data.frame(
+  region = c("leader", "cds", "trailer", "uorf"),
+  do.call(rbind, lapply(
+    c("leader", "cds", "trailer", "uorf"),
+    function(region) {
+      colSums(SummarizedExperiment::assay(region_counts, region))
+    }
+  )),
+  check.names = FALSE
+)
+colnames(region_totals)[-1L] <- colnames(region_counts)
+data.table::fwrite(
+  region_totals,
+  file.path(out_base, "simulated_region_counts.tsv"),
+  sep = "\t"
+)
+
+exp <- simNGScoverage(
+  simGenome = sim_genome,
+  count_table = region_counts,
+  out_dir = file.path(out_base, "reads"),
+  exp_name = "human_flavoured_riboseq",
+  exp_save_dir = file.path(out_base, "experiment"),
+  read_lengths_per = list(RFP = read_lengths),
+  seq_bias = load_seq_bias(
+    type = "codon",
+    shift = "a-site",
+    bias = bias_profile
+  ),
+  auto_correlation = list(
+    cds = list(RFP = shapes(9)),
+    uorf = list(RFP = shapes(9))
+  ),
+  dmn_alpha_scale = dmn_alpha_scale,
+  fragment_geometry = list(
+    source = "default",
+    site_reference = "a_site",
+    boundary_action = "renormalize",
+    five_prime_bias = five_prime_bias,
+    three_prime_bias = three_prime_bias
+  ),
+  ground_truth = TRUE,
+  libFormats = list(RFP = "bam"),
+  validate = TRUE,
+  debug_coverage = FALSE
+)
+
+bam_files <- ORFik::filepath(exp, "default")
+print(bam_files)
+
+message("Ground-truth files:")
+print(list.files(file.path(out_base, "reads"), pattern = "ground.truth", full.names = TRUE))
+
+count_mat <- SummarizedExperiment::assay(gene_counts)
+sample_info <- as.data.frame(SummarizedExperiment::colData(gene_counts))
+
+grDevices::pdf(file.path(out_base, "simulation_diagnostics.pdf"))
+
+wt_cols <- which(sample_info$condition == "WT")
+ko_cols <- which(sample_info$condition == "KO")
+
+wt_mean <- rowMeans(count_mat[, wt_cols, drop = FALSE])
+ko_mean <- rowMeans(count_mat[, ko_cols, drop = FALSE])
+
+plot(
+  wt_mean, ko_mean,
+  pch = 16, cex = 0.5, col = rgb(0, 0, 1, 0.25),
+  xlab = "Mean WT gene count",
+  ylab = "Mean KO gene count",
+  main = "Gene-level Ribo-seq counts: WT vs KO"
+)
+abline(0, 1, col = "red", lty = 2)
+
+region_plot_totals <- rbind(
+  leader  = colSums(SummarizedExperiment::assay(region_counts, "leader")),
+  cds     = colSums(SummarizedExperiment::assay(region_counts, "cds")),
+  trailer = colSums(SummarizedExperiment::assay(region_counts, "trailer")),
+  uorf    = colSums(SummarizedExperiment::assay(region_counts, "uorf"))
+)
+
+region_props <- sweep(
+  region_plot_totals,
+  2,
+  colSums(region_plot_totals),
+  "/"
+)
+
+barplot(
+  region_props,
+  beside = FALSE,
+  col = c("steelblue", "tomato", "goldenrod", "darkseagreen4"),
+  names.arg = paste(sample_info$condition, sample_info$replicate, sep = "_"),
+  las = 2,
+  ylab = "Fraction of counts",
+  main = "Region composition across samples"
+)
+
+legend(
+  "topright",
+  legend = rownames(region_props),
+  fill = c("steelblue", "tomato", "goldenrod", "darkseagreen4"),
+  bty = "n"
+)
+
+grDevices::dev.off()

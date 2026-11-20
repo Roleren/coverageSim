@@ -1,0 +1,196 @@
+# Constructive gene architectures (RDG plan step 2): exact placement, sequence
+# written for every frame at once, verification, decoy labelling, genome mapping.
+
+stops <- c("TAA", "TAG", "TGA")
+
+has_internal_stop <- function(x) vapply(x, function(z) {
+  n <- nchar(z) %/% 3L
+  if (n <= 2L) return(FALSE)
+  any(substring(z, seq(4L, by = 3L, length.out = n - 2L),
+                seq(6L, by = 3L, length.out = n - 2L)) %in% stops)
+}, logical(1), USE.NAMES = FALSE)
+
+build_genome <- function(architecture, n = 6, seed = 7, ...) {
+  set.seed(seed)
+  dir <- tempfile("arch_"); dir.create(dir)
+  suppressMessages(simGenome(n = n, out_dir = dir, architecture = architecture,
+                             leader_length = rep(150, n), cds_length = rep(300, n),
+                             trailer_length = rep(150, n), debug_on = FALSE, ...))
+}
+
+feature_seqs <- function(genome) {
+  ranges <- readRDS(genome[["features"]])
+  as.character(ORFik::txSeqsFromFa(ranges, Rsamtools::FaFile(genome[["genome"]]),
+                                   is.sorted = TRUE))
+}
+
+test_that("every requested feature exists exactly in the genome, on both strands and across introns", {
+  genome <- build_genome("all", n = 8, cds_exons = 2)
+  features <- data.table::fread(genome[["features_table"]])
+  requested <- features$origin == "requested"
+  expect_equal(sum(requested), 8 * 5)
+  expect_setequal(unique(features$class[requested]),
+                  c("uORF", "uoORF", "intORF", "doORF", "dORF"))
+  seqs <- feature_seqs(genome)
+  expect_equal(unname(nchar(seqs)), features$tx_end - features$tx_start + 1L)
+  expect_true(all(substr(seqs, 1, 3)[requested] == features$start_codon[requested]))
+  expect_true(all(substring(seqs, nchar(seqs) - 2L)[requested] %in% stops))
+  expect_false(any(has_internal_stop(seqs[requested])))
+  # Out-of-frame classes really are out of the CDS frame.
+  oof <- requested & features$class %in% c("uoORF", "intORF", "doORF")
+  expect_true(all(features$frame[oof] %in% 1:2))
+  # The main CDS is still a valid ORF after all other frames were written.
+  fa <- Rsamtools::FaFile(genome[["genome"]])
+  cds <- as.character(ORFik::txSeqsFromFa(
+    ORFik::loadRegion(ORFik::loadTxdb(genome[["txdb"]]), "cds"), fa, is.sorted = TRUE))
+  expect_true(all(substr(cds, 1, 3) == "ATG"))
+  expect_false(any(has_internal_stop(cds)))
+  expect_true(all(substring(cds, nchar(cds) - 2L) %in% stops))
+})
+
+test_that("near-cognate N-terminal extensions run in frame to the CDS stop", {
+  genome <- build_genome("NTE_CUG", n = 4)
+  features <- data.table::fread(genome[["features_table"]])
+  nte <- features[origin == "requested"]
+  expect_true(all(nte$class == "NTE" & nte$frame == 0L & nte$start_codon == "CTG"))
+  seqs <- feature_seqs(genome)[features$origin == "requested"]
+  expect_true(all(startsWith(seqs, "CTG")))
+  expect_false(any(has_internal_stop(seqs)))
+  expect_equal(unname(nchar(seqs)), rep(60L + 306L, 4))
+})
+
+test_that("decoys are built untranslated and incidental ORFs are labelled", {
+  genome <- build_genome("uORF_decoy", n = 4)
+  features <- data.table::fread(genome[["features_table"]])
+  requested <- features[origin == "requested"]
+  expect_equal(as.vector(table(requested$status)), c(4L, 4L)) # decoy, translated
+  incidental <- features[origin == "incidental"]
+  expect_true(all(incidental$status == "decoy"))
+  expect_true(all(incidental$class %in% c(feature_classes, "N_truncation", "spanning")))
+  # Only the translated uORFs reach the read simulation.
+  uorfs <- readRDS(genome[["uorfs"]])
+  expect_equal(length(uorfs), 4L)
+  expect_setequal(names(uorfs), unique(requested$transcript_id))
+})
+
+test_that("a different architecture per gene, including none, is built as asked", {
+  arch <- list(architecture_preset("two_uORFs"), NULL, "dORF")
+  genome <- build_genome(arch, n = 3)
+  features <- data.table::fread(genome[["features_table"]])[origin == "requested"]
+  expect_equal(features[, .N, by = transcript_id][order(transcript_id)]$N, c(2L, 1L))
+  expect_equal(sort(features$class), c("dORF", "uORF", "uORF"))
+  two <- features[class == "uORF"]
+  expect_true(two$tx_end[1] < two$tx_start[2] || two$tx_end[2] < two$tx_start[1])
+})
+
+test_that("impossible architectures stop before any sequence is made", {
+  dir <- tempfile("arch_bad_"); dir.create(dir)
+  expect_error(simGenome(n = 2, out_dir = dir, leader_length = c(150, 20),
+                         architecture = gene_architecture("uORF", 30), debug_on = FALSE),
+               "ENSTTEST10002: uORF of 30 nt does not fit")
+  expect_false(file.exists(file.path(dir, "Homo_sapiens_dummy.fasta")))
+  expect_error(simGenome(n = 1, out_dir = dir, leader_length = 40,
+                         architecture = gene_architecture(c("uORF", "uORF"), c(30, 30),
+                                                          may_overlap = FALSE),
+                         debug_on = FALSE),
+               "(no room for|does not fit).*uORF|uORF of 30 nt (does not fit|next to)")
+  expect_error(simGenome(n = 1, out_dir = dir, max_uorfs = 2, architecture = "uORF",
+                         debug_on = FALSE), "not both")
+  expect_error(gene_architecture("uORF", 31), "multiples of 3")
+  expect_error(gene_architecture("xORF", 30), "Unknown feature class")
+})
+
+test_that("reads can be simulated on a genome built from an architecture", {
+  genome <- build_genome("ATF4_like", n = 4)
+  counts <- suppressMessages(simCountTables(
+    ORFik::loadRegion(genome["txdb"], "cds"), libtypes = "RFP",
+    conditions = "WT", replicates = 1, plot_PCA = FALSE, print_statistics = FALSE))
+  SummarizedExperiment::assay(counts)[] <- 1000
+  regions <- suppressMessages(simCountTablesRegions(counts))
+  dir <- dirname(genome[["genome"]])
+  experiment <- suppressMessages(simNGScoverage(genome, regions, out_dir = dir,
+    exp_save_dir = dir, fragment_mode = "legacy_point",
+    libFormats = list(RFP = "ofst"), validate = FALSE))
+  reads <- ORFik::fimport(ORFik::filepath(experiment, "default")[[1]])
+  expect_equal(sum(S4Vectors::mcols(reads)$score), 4 * 1000)
+})
+
+test_that("every translated feature class gets reads in its own frame, traceable in the ground truth", {
+  set.seed(5)
+  n <- 6
+  dir <- tempfile("arch_reads_"); dir.create(dir)
+  genome <- suppressMessages(simGenome(n = n, out_dir = dir, architecture = "all",
+    leader_length = rep(200, n), cds_length = rep(600, n), trailer_length = rep(300, n),
+    cds_exons = 2, debug_on = FALSE))
+  counts <- suppressMessages(simCountTables(
+    ORFik::loadRegion(genome["txdb"], "cds"), libtypes = "RFP",
+    conditions = "WT", replicates = 1, plot_PCA = FALSE, print_statistics = FALSE))
+  SummarizedExperiment::assay(counts)[] <- 3000
+  regions <- suppressMessages(simCountTablesRegions(counts, region_proportion = list(
+    leader = list(RFP = 0.02), cds = list(RFP = 0.6), trailer = list(RFP = 0.02),
+    uorf = list(RFP = 0.36))))
+  suppressMessages(simNGScoverage(genome, regions, out_dir = dir, exp_save_dir = dir,
+    ground_truth = TRUE, libFormats = list(RFP = "ofst"), validate = FALSE))
+  truth_file <- list.files(dir, "ground_truth", recursive = TRUE, full.names = TRUE)[1]
+  truth <- annotate_ground_truth(truth_file, genome)
+  features <- truth[!is.na(feature_id)]
+  expect_setequal(unique(features$class), c("uORF", "uoORF", "intORF", "doORF", "dORF"))
+  per_class <- features[, .(inside = sum(score * !is.na(feature_position)) / sum(score),
+                            frame0 = sum(score * (feature_position %% 3 == 0), na.rm = TRUE) /
+                              sum(score)), by = class]
+  expect_true(all(per_class$inside > 0.9))
+  expect_true(all(per_class$frame0 > 0.5))
+  # Decoys get no reads.
+  table <- data.table::fread(genome[["features_table"]])
+  expect_false(any(features$feature_id %in% table[status == "decoy", feature_id]))
+})
+
+test_that("frameshift segments and readthrough extensions are built in their own frames", {
+  arch <- list(architecture_preset("frameshift_plus1"), architecture_preset("frameshift_minus1"),
+               architecture_preset("readthrough"), architecture_preset("readthrough"))
+  genome <- build_genome(arch, n = 4, seed = 3, cds_exons = 2)
+  features <- read_features_table(genome)
+  req <- features[origin == "requested"]
+  expect_equal(req$class, c("FS", "FS", "CTE", "CTE"))
+  expect_true(all(is.na(req$start_codon)))
+  expect_equal(req$frame, c(1L, 2L, 0L, 0L))
+  seqs <- feature_seqs(genome)[features$origin == "requested"]
+  # Stop-free from the first codon, ending in a stop.
+  first_codon_stop <- vapply(seqs, function(z) {
+    n <- nchar(z) %/% 3L
+    any(substring(z, seq(1L, by = 3L, length.out = n - 1L),
+                  seq(3L, by = 3L, length.out = n - 1L)) %in% stops)
+  }, logical(1))
+  expect_false(any(first_codon_stop))
+  expect_true(all(substring(seqs, nchar(seqs) - 2L) %in% stops))
+  # Readthrough starts right after the CDS stop, which stays a stop.
+  cte <- req[class == "CTE"]
+  cds_end <- 150L + 306L
+  expect_true(all(cte$tx_start == cds_end + 1L))
+  fa <- Rsamtools::FaFile(genome[["genome"]])
+  cds <- as.character(ORFik::txSeqsFromFa(
+    ORFik::loadRegion(ORFik::loadTxdb(genome[["txdb"]]), "cds"), fa, is.sorted = TRUE))
+  expect_true(all(substring(cds, nchar(cds) - 2L) %in% stops))
+  expect_false(any(has_internal_stop(cds)))
+})
+
+test_that("the C++ and R sequence writers agree for frameshift and readthrough features", {
+  arch <- architecture_per_gene(list(architecture_preset("frameshift_plus1"),
+                                     architecture_preset("readthrough")), 2L, c("a", "b"))
+  set.seed(9)
+  placed <- place_features(arch, c(150L, 150L), c(306L, 306L), c(150L, 150L))
+  tx <- vapply(1:2, function(i) paste(sample(c("A", "C", "G", "T"), 606, TRUE), collapse = ""), "")
+  substr(tx, 151, 153) <- "ATG"; substr(tx, 454, 456) <- "TAA"
+  set.seed(1); a <- write_feature_sequences(tx, data.table::copy(placed), c(150L, 150L), c(306L, 306L), stops)
+  old <- options(coverageSim.engine = "R"); on.exit(options(old))
+  set.seed(1); b <- write_feature_sequences(tx, data.table::copy(placed), c(150L, 150L), c(306L, 306L), stops)
+  expect_identical(a$tx_seqs, b$tx_seqs)
+})
+
+test_that("uORFs keep a margin from the transcript 5' end so their first codon can get reads", {
+  arch <- architecture_per_gene(rep(list(architecture_preset("ATF4_like")), 20), 20L,
+                                paste0("t", 1:20))
+  set.seed(3)
+  placed <- place_features(arch, rep(150L, 20), rep(306L, 20), rep(150L, 20))
+  expect_true(all(placed[class %in% c("uORF", "uoORF")]$tx_start >= edge_margin))
+})
