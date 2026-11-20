@@ -72,6 +72,10 @@ You now have genome, gtf and tracks loaded in IGV
 
 `options(coverageSim.codon_bias = codon_bias_preset("realistic"))` plus `do.call(simNGScoverage, c(list(...), realistic_rfp_settings()))` give lower clumping and replicate frame noise closer to real data (backclaude t69; defaults are unchanged). The learned geometry/frame bias in `inst/extdata/realistic_rfp_geometry_SRR12651187.rds` come from SRR12651187 (6 M read subsample, 2264 canonical transcripts, `learn_fragment_geometry()` / `learn_end_bias(by_length = TRUE)`). The simulated window band is now narrower than real, so a false-flag test on simulated data is conservative; see `docs/REALISTIC_RFP.md`.
 
+## Multi-isoform genes (opt-in, backclaude E17-S7)
+
+`x <- simIsoformGenes(1000, ref_minor_frac = 0.3)`; `simIsoformReads(x)` gives ribosome (replicates) and RNA reads from one isoform mixture in the codon coordinates of the reference (MANE-like) isoform, with the truth expectation `E_truth` next to the flat reference expectation `E_flat` (`isoform_expected()`); n_iso, reference weight and isoform-specific CDS fraction are resampled from 17,935 real human genes (20.7 % have a reference weight < 0.5). `te_sd` / `rna_weight_sd` make the ribosome and RNA mixtures differ. A separate layer: `simGenome()` / `simNGScoverage()` and all defaults are unchanged. Truth check: `scripts/s7_truth_check.R` (flat vs RNA-mixture vs truth).
+
 ## Learn end biases independently of the simulation inputs
 
 `learn_end_bias()` estimates 5-prime and 3-prime sequence preferences from a
