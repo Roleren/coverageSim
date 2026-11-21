@@ -27,6 +27,7 @@ All settings below are opt-in: with none of them set, every simulation is identi
 | S10 | `options(coverageSim.utr3 = ...)`: `utr3_options()`, `utr3_preset()`, `draw_utr3_features()` | off | `utr3_preset("human")` |
 | S11 | `simNGScoverage(technical_artifacts = list(spike_sites, ...))` | `spike_sites = 0` | e.g. `spike_sites = 2` |
 | S12 | `options(coverageSim.codon_dwell = ...)`: `codon_dwell_options()`, `codon_dwell_preset()`, `assign_dwell_groups()`, `library_dwell_profile()` | off | `codon_dwell_preset("human")` + `assign_dwell_groups()` |
+| S13 | `codon_bias_options(pp_stall, pp_stall_take, pp_stall_peak, pro_run, pro_run_factor, pause_sharp, pause_flank_width, pause_flank_take)` | off | `codon_bias_preset("human")` |
 
 Truth tables written next to the libraries: `<library>_ground_truth.tsv` (`ground_truth = TRUE`),
 `<library>_spike_truth.tsv` (S11), `utr3_features.tsv` (S10), `codon_dwell_profiles.tsv` (S12).
@@ -114,6 +115,50 @@ study, tissue_group, peaky)`, see `?codon_dwell_options`. Data: `inst/extdata/co
   0.20 (1.47-1.51x) at 3,000-15,000 reads per gene.
 Profiles are written to `codon_dwell_profiles.tsv`. Test: a planted +log(8) A-site GAA delta raises the GAA read odds 4-12x
 in the planted library only. Explainer truth check (study-mixture dwell of v1.6 on the new simulation) still to run.
+
+**S13 (11-21) sharp pauses, Pro-Pro stalls, Pro-run depletion, autocorrelated background** (from M15, M16, M16-acf;
+this port, requested by Håkon). Real data (MF/m16_repeats/acf_real.R and raw_pro.R; 7.8 M codons of 14,310
+well-covered MANE genes, merged unique track, v1.8b explainer expectation, median ~1,200 P-sites per codon):
+- background per-codon ACF of gene-centred log(O+1) at lags 1-5: 0.58 / 0.42 / 0.37 / 0.33 / 0.28 (lag 10 0.15); the
+  codon dwell model alone 0.45 / 0.32 / 0.31 / 0.26 / 0.17; residual log O/E 0.64 at lag 1, 0.47 at lag 2, 0.22 at lag
+  10 (smooth red noise, no periodicity, M15).
+- 42,195 Pro-Pro stalls (Pro at E and P, non-Pro A; offset 0 = P-site codon): raw log density at offsets -3..+3
+  -0.28 / -0.31 / -0.16 / +0.20 / -0.12 / -0.40 / -0.36, residual vs the model -0.13 / -0.19 / -0.14 / +0.10 / -0.09 /
+  -0.06 / -0.04: a sharp peak whose neighbours are depleted relative to the model.
+- Pro runs: raw log density by Pro count in P-site +-2: 0 -0.28, 1 -0.32, 2 -0.44, 3 -0.64, 4-5 -1.18; the additive
+  model predicts -0.09 .. -0.20 (observed minus model relative to 0 Pro: 3 -0.27, 4-5 -0.80). PPP at E-P-A -0.99.
+
+The original simulator multiplies a pause onto one codon after the smoothing (S2): a peak without depleted flanks, and
+with the "realistic" preset (fixed sharpening, pause_sd 1.0 on 70% of codons) almost no autocorrelation beyond lag 1
+(0.39 / 0.03 / 0 ...; the original per-gene sharpening has the opposite problem, 0.84 / 0.72 / 0.61 / 0.52 / 0.44).
+Settings (`?codon_bias_options`), all after the smoothing step:
+- `pp_stall = TRUE`: the codon whose P site is a stall takes `pp_stall_take` of each neighbour's weight (offsets
+  -1, +1; a vector of length 2w for -w..-1, +1..+w) and is then multiplied by `pp_stall_peak`. Defaults c(0.20, 0.10)
+  and 0.9, calibrated on simulated reads: the direct translation of the residuals, 1 - exp(c(-0.14, -0.09)) =
+  c(0.13, 0.09), gives only -0.08 / -0.08 on the flanks because the simulator's RNase blur spreads part of the loss;
+  the real peak gains less than the flanks lose, hence the peak factor < 1. Applied after the S12 dwell layers, so the
+  stall takes relative to the model weights. The decoding-site frame is respected (`a_shift`: A- or P-site weights).
+- `pro_run = TRUE`: the codon whose P site has nP Pro codons in P-site +-2 gets `pro_run_factor[nP]` (default nP 3
+  0.766 = exp(-0.266), 4-5 0.45 = exp(-0.799); add `"2" = 0.90` for the milder nP = 2).
+- `pause_sharp = TRUE`: the S2 pauses (m > 1) take their extra weight from their `pause_flank_width` neighbours (at most
+  `pause_flank_take` of the flank total), conserving the local total; dips stay multiplicative. Not in the preset: with
+  pause_prob 0.5-0.9 the cap shrinks the codon-level variance, so the smooth component dominates and lags 2-10 rise
+  (0.68 / 0.59 / 0.54 / 0.48 / 0.43 at pause_sd 1.1, pause_prob 0.9); use it with sparse pauses.
+- `codon_bias_preset("human")`: the original per-gene sharpening + smoothing (the smooth background), per-genome draws,
+  pause_sd 0.9 / pause_prob 0.8, CDS tau2 0.06 (S9, about 2x human), `pp_stall`, `pro_run`. A larger tau2 (0.35) also
+  fits the ACF but adds about 10x the real window-level variance.
+
+Test (test_sharp_pauses.R; 1,000 genes x 400 random sense codons, 20 libraries of 1,500 reads per gene merged =
+30,000 reads per gene): simulated ACF at lags 1-5 0.64 / 0.42 / 0.35 / 0.31 / 0.26 (lag 10 0.10; tolerance +-0.08 of
+real); residual (S13 on vs off) at Pro-Pro stall offsets -1 / 0 / +1 -0.139 / +0.097 / -0.087 (1,558 stalls, se 0.01;
+real -0.14 / +0.10 / -0.09, tolerance 50%), -2 -0.11 (real -0.19, from the Pro-run layer: windows at -2..+1 hold both
+stall Pro); Pro-run on minus off by Pro count: 3 -0.24, 4-5 -0.79 (target -0.27 / -0.80). At 3,000 reads per gene the
+ACF is lower (0.52 / 0.34 / 0.29 / 0.24 / 0.21; Poisson noise), the stall residual similar (-0.11 / +0.10 / -0.08).
+Unit tests: local conservation of sharp pauses, flank takes and P/A-site indexing of the stall kernel, Pro counts, and
+that `simNGScoverage()` hands the codons to the layers. Not simulated: the real raw stall profile in absolute terms
+(simulated raw at -1 / 0 / +1 -0.40 / -0.04 / -0.15 vs real -0.16 / +0.20 / -0.12: the bundled A-site table and the
+random sequences differ from the human dwell around Pro), the residual at -3 / +2 / +3, Gly runs (M16 fits a Pro x Gly
+table; only Pro is ported). Explainer truth check (v1.8b on the new simulation) still to run.
 
 ## Explainer iterations (E rows)
 
@@ -290,13 +335,22 @@ has no protein features.
 **M9 (11-21) co-translational assembly, direct test.** Mechanism confirmed in the Bertolini disome data, but no dip in the
 merged monosome windows; a fitted distance term worsens held-out fit (MF/m8_nascent/disome.R). Not simulated: not adopted.
 
+**M15 (11-21) UniProt motifs and periodicity.** Motifs / sites / PTMs |delta| <= 0.05; poly-Pro -0.39, poly-Gly -0.35
+(additive dwell saturates on repeats); the residual is red noise without 3.6 / 2 / 7 codon periods
+(MF/m15_uniprot_motifs/REPORT.md). Simulator: the red-noise background and the Pro runs are S13; no motif term.
+
+**M16 / M16-acf (11-21) Pro / Gly repeat saturation, per-codon autocorrelation.** Pro x Gly run factor cross-fitted
+(per-codon R2 +0.65%, not adopted for the window map); raw coverage falls with Pro count; Pro-Pro stalls are sharp
+peaks with depleted flanks; real ACF 0.58 / 0.42 / 0.37 / 0.33 / 0.28 (MF/m16_repeats/). Simulator: S13
+(`codon_bias_preset("human")`).
+
 ## Simulating realistic human Ribo-seq
 
 The ports combine. A study design with three studies, one of them striated muscle with peaky libraries:
 
 ```r
 library(coverageSim)
-options(coverageSim.codon_bias  = modifyList(codon_bias_preset("realistic"),            # S2, S5
+options(coverageSim.codon_bias  = modifyList(codon_bias_preset("realistic"),            # S2, S5 (or "human": S13)
                                              list(zero_prob = 0.3,                       # S6
                                                   tau2 = c(cds = 0.06, utr5 = 0.3, utr3 = 0.6))),  # S9 (~2x human)
         coverageSim.utr3        = utr3_preset("human"),                                  # S10
@@ -316,6 +370,10 @@ exp <- do.call(simNGScoverage, c(list(simGenome = genome, count_table = regions,
 
 Isoform mixtures (S7) and paralog families (S8) are separate grid-level simulators (`simIsoformGenes()` +
 `simIsoformReads()`, `simParalogFamilies()`); use them for the isoform and multimapper truth checks.
+
+For the codon-level structure (smooth autocorrelated background, Pro-Pro stalls with depleted flanks, Pro-run
+depletion) use `codon_bias_preset("human")` (S13) in place of "realistic" and add the UTR tau2 values of S9; S13 has not
+yet been checked against the S4-S6 clumping and peak metrics, which were tuned on "realistic".
 
 Known gaps (real vs simulated): per-gene frame profiles (S3), clumping (S5-S6), shorter 3'UTR plateau reads and
 study-specific plateau amplitude (S10), read-length-specific P-site offset errors (GW1.3), ER / nascent-chain classes
