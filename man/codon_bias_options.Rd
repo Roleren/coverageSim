@@ -13,6 +13,14 @@ codon_bias_options(
   zero_prob = 0,
   tau2 = 0,
   tau2_window = 90L,
+  pause_sharp = FALSE,
+  pause_flank_width = 1L,
+  pause_flank_take = 0.5,
+  pp_stall = FALSE,
+  pp_stall_take = c(0.2, 0.1),
+  pp_stall_peak = 0.9,
+  pro_run = FALSE,
+  pro_run_factor = c(`3` = 0.766, `4` = 0.45, `5` = 0.45),
   seed = 1L
 )
 }
@@ -42,6 +50,38 @@ needs about 1.5-2x the human value to pass the same band. One log-normal factor 
 Window-aligned estimators recover \code{tau2}; windows straddling two blocks see about half of it.}
 
 \item{tau2_window}{block length in nt of the shared factor, default 90 (30 codons, the window of the density test).}
+
+\item{pause_sharp}{logical (S13; FALSE = original). TRUE makes every pause of \code{pause_sd} a sharp single-codon
+change that conserves the local total: a pause with factor m > 1 gains (m - 1) x its weight, which its
+\code{pause_flank_width} neighbours on each side give in proportion to their weights, so a peak has depleted flanks
+as in real data (M16-acf: residual log density -0.14 / +0.10 / -0.09 at Pro-Pro stall offsets -1 / 0 / +1). Dips
+(m < 1) stay multiplicative. FALSE multiplies the codon only. With dense pauses (pause_prob 0.5-0.9) the take cap
+shrinks the codon-level variance and raises the autocorrelation at lags 2-10; meant for sparse pauses.}
+
+\item{pause_flank_width}{integer >= 1, number of neighbouring codons on each side that feed a sharp pause.}
+
+\item{pause_flank_take}{numeric in (0, 1], the largest fraction of its flanks' total weight one sharp pause can take.}
+
+\item{pp_stall}{logical (S13; FALSE = original), the Pro-Pro stall kernel: a codon whose P site follows a Pro (E
+site) and is a Pro, with a non-Pro A site, takes \code{pp_stall_take} of the weight of each neighbour (P-site
+offsets -w..-1, +1..+w) and is then multiplied by \code{pp_stall_peak}. Needs codon identities (codon-level
+\code{seq_bias}); applied after the library codon dwell layers of \code{\link{codon_dwell_options}}.}
+
+\item{pp_stall_take}{numeric, even length 2w: the fraction each flank gives, ordered -w..-1, +1..+w. Default
+c(0.20, 0.10), calibrated so that simulated reads reproduce the real residual profile (M16-acf: -0.14 / +0.10 /
+-0.09 at offsets -1 / 0 / +1; simulated -0.14 / +0.10 / -0.09 with \code{codon_bias_preset("human")}, 1,000 genes at
+30,000 reads). The direct translation 1 - exp(c(-0.14, -0.09)) = c(0.13, 0.09) gives only -0.08 / -0.08 on the flanks,
+because the RNase blur of the simulator spreads part of the loss onto the next codons.}
+
+\item{pp_stall_peak}{numeric > 0, extra multiplier on the stall codon (1 = pure redistribution). Default 0.9: the
+real peak gains less than its flanks lose (residual +0.10 vs -0.14 / -0.09), so the local total is not fully kept.}
+
+\item{pro_run}{logical (S13; FALSE = original), Pro-run depletion: the codon whose P site has nP Pro codons in P-site
++-2 gets \code{pro_run_factor[nP]}.}
+
+\item{pro_run_factor}{named numeric (names = Pro counts). Default: nP 3 0.766, 4-5 0.45 = exp(-0.266) / exp(-0.799),
+the real minus additive-dwell-model log density by Pro count relative to nP = 0 (M16, m16_repeats/raw_pro.R:
+observed 0 -0.28, 1 -0.32, 2 -0.44, 3 -0.64, 4-5 -1.18; model -0.09 .. -0.20). Add "2" = 0.90 for the milder nP = 2.}
 
 \item{seed}{integer seed for the per-genome draws.}
 }

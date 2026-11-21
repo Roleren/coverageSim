@@ -366,8 +366,21 @@ simNGScoverage <- function(simGenome,
     spike_table <- draw_spike_sites(models, ncol(count_table), technical_artifacts,
                                     cds_xy$start, cds_xy$length)
   }
+  # Opt-in library codon dwell (codon_dwell_options(), S12): one profile per library, drawn before any sampling.
+  codon_dwell <- codon_dwell_run_setup(colData(count_table), colnames(count_table))
+  # Offsets are relative to the A site; the decoding site of the codon table is the A site for simulated RPFs with
+  # site_reference "a_site" (resolve_seq_bias() picks the same table), else the P site (A = P + 1).
+  dwell_a_shift <- if (fragment_mode == "simulated_rpf" && fragment_geometry$site_reference == "a_site") 0L else 1L
   # 3. Read the sequences and attach a weight to every position.
   sequence_table_controller()
+  # Opt-in 3'UTR features (utr3_options(), S10): drawn once per run, shared by all libraries.
+  utr3_run <- if ("trailer" %in% regionsToSample) {
+    utr3_run_features(lengths_trailer, rownames(count_table))
+  }
+  if (!is.null(utr3_run)) {
+    data.table::fwrite(utr3_run$features, file.path(out_dir, "utr3_features.tsv"), sep = "\t")
+  }
+  write_codon_dwell_profiles(codon_dwell, out_dir)
 
   # Sum the per-region assays: a gene's reads are spread over leader, CDS,
   # trailer and uORFs, and the total per gene is what has to be placed.
@@ -555,6 +568,8 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
       }
       region_ranges <- get(paste0(region, "_ranges"), mode = "S4", envir = env)
       dt_region <- copy(get(paste0("dt_", region), envir = env))
+      # Opt-in 3'UTR features (S10): multipliers of the trailer weights, NULL when off.
+      utr3 <- if (region == "trailer") get0("utr3_run", envir = env, inherits = FALSE)
       ideal_cov <- get_value(ideal_coverage, region, libtype) # skew_cov
       if (is.null(ideal_cov)) ideal_cov <- quote(rep(1, x))
       auto_cor <- get_value(auto_correlation, region, libtype) # bump_shape
@@ -565,11 +580,22 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
         region_length_matrix <- get(paste0("region_length_matrix", region),
                                     envir = env)
         alpha_matrix <- get(paste0("seq_alpha_list_", region), envir = env)
+        # Opt-in library codon dwell (S12): factors per codon, peaky power and concentration.
+        dwell <- library_dwell_for_region(get0("codon_dwell", envir = env, inherits = FALSE),
+                                          get0(paste0("seq_codons_", region), envir = env, inherits = FALSE),
+                                          colnames(count_table_regions),
+                                          get0("dwell_a_shift", envir = env, inherits = FALSE, ifnotfound = 0L))
         # Calculate bias of coverage
         res <- sim_sequence_bias(ideal_cov, lengths,
                                  alpha_matrix, auto_cor,
-                                 rnase_bias[[libtype]], region = region)
-        res <- scale_dmn_alpha(res, dmn_alpha_scale)
+                                 rnase_bias[[libtype]], region = region,
+                                 codon_factors = dwell$factors, peaky_power = dwell$power,
+                                 codons = get0(paste0("seq_codons_", region), envir = env, inherits = FALSE),
+                                 a_shift = get0("dwell_a_shift", envir = env, inherits = FALSE, ifnotfound = 1L))
+        if (!is.null(utr3)) {
+          res <- lapply(seq_along(res), function(i) apply_utr3_factors(res[[i]], lengths[i], i, libtype, utr3))
+        }
+        res <- scale_dmn_alpha(res, dmn_alpha_scale / dwell$var_ratio)
         sampled_lengths <- lengths(res)
         if (defer_counts) {
           # draw_site_probabilities() draws latent site probabilities
@@ -609,7 +635,7 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
         # The usual flat profile can be sampled for all genes in one call.
         # Keep arbitrary user expressions and deferred probabilities on the R path.
         uniform_batch <- !identical(getOption("coverageSim.engine"), "R") &&
-          identical(ideal_cov, quote(rep(1, x))) && !defer_counts &&
+          identical(ideal_cov, quote(rep(1, x))) && !defer_counts && is.null(utr3) &&
           length(lengths) == length(region_counts) &&
           length(lengths) == length(region_ranges) && all(lengths > 0L) &&
           all(is.finite(region_counts) & region_counts >= 0 &
@@ -621,6 +647,7 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
         } else sample <- lapply(seq_along(region_ranges), function(y) {
           x <- lengths[y]
           weights <- eval(ideal_cov)
+          if (!is.null(utr3)) weights <- apply_utr3_factors(weights, x, y, libtype, utr3)
           values <- if (defer_counts) draw_site_probabilities(weights) * region_counts[y]
           else as.vector(rmultinom(1, region_counts[y], weights))
           if (region_rnase_reach > 0L) {

@@ -4,12 +4,17 @@
 \alias{codon_bias_preset}
 \title{Named codon-bias settings}
 \usage{
-codon_bias_preset(name = c("original", "t57", "realistic"))
+codon_bias_preset(name = c("original", "t57", "realistic", "human"))
 }
 \arguments{
-\item{name}{"original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses) or "realistic"
+\item{name}{"original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses), "realistic"
 (the t57 base with pause_sd 1.0 and pause_prob 0.7, backclaude t75: keeps the t69 clumping/frame gains and the real peak ratio;
-use together with \code{\link{realistic_rfp_settings}}). "t57" is unchanged.}
+use together with \code{\link{realistic_rfp_settings}}) or "human" (port S13, M16-acf: the original per-gene
+sharpening and smoothing, which give the smooth positively autocorrelated background, plus per-genome pauses
+pause_sd 0.9 / pause_prob 0.8, CDS tau2 0.06 (S9), the Pro-Pro stall kernel and the Pro-run depletion; simulated
+per-codon ACF at lags 1-5 0.64 / 0.42 / 0.35 / 0.31 / 0.26 vs real 0.58 / 0.42 / 0.37 / 0.33 / 0.28). The
+"realistic" preset has almost no autocorrelation beyond lag 1 (0.39 / 0.03 / 0 ...): its fixed sharpening and strong
+pauses drown the smooth component. "t57" and "realistic" are unchanged.}
 }
 \value{
 a list for \code{options(coverageSim.codon_bias = ...)}
