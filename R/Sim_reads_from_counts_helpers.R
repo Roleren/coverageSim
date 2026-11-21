@@ -519,6 +519,12 @@ sequence_table_controller <- function() {
         alpha_matrix <- add_sequence_bias(simGenome, dt_range, seq_bias,
                                           region_ranges, lengths, region)
       }
+      # Codon identities for the library dwell layers (codon_dwell_options(), S12), only when they are active.
+      assign(paste0("seq_codons_", region),
+             if (add_sequence_bias && exists("codon_dwell", inherits = FALSE) && !is.null(codon_dwell)) {
+               translate_orf_seq(region_ranges, simGenome["genome"], is.sorted = TRUE, as = "codon",
+                                 return.as.list = TRUE)
+             })
       needs_rnase_extension <- !is.null(rnase_bias[["RFP"]]) &&
         (region %in% c("cds", "uorf")) && region_uses_dmn &&
         rnase_kernel_reach(rnase_bias) > 0L
@@ -705,7 +711,8 @@ apply_autocorrelation_kernel <- function(signal, kernel) {
 # mirror, with nothing in the output to show it.
 sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
                               seq_acf = 9, rnase_acf =
-                                c(0.5, 2, 1, 10, 2, 1, 0.5), region = "cds") {
+                                c(0.5, 2, 1, 10, 2, 1, 0.5), region = "cds",
+                              codon_factors = NULL, peaky_power = 1) {
   # The start codon's weight says how often a decoding site sits on the start
   # codon itself. For an A-site table that is almost never, because initiation
   # places the start codon in the P site, not the A site. The chain below cannot
@@ -785,6 +792,19 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
         x * ifelse(hit, exp(stats::rnorm(length(x), 0, cb$pause_sd)), 1)
       }))
     }
+  }
+  # Step 1c2 (opt-in, codon_dwell_options(), port S12): library-specific codon dwell (global context layer + study +
+  # library deviation + tissue delta) as one multiplicative factor per codon, then the peaky-library power. Applied
+  # after the smoothing, like the pauses, so single-codon effects survive.
+  if (!is.null(alpha_matrix) && (!is.null(codon_factors) || peaky_power != 1)) {
+    res <- lapply(seq_along(res), function(i) {
+      x <- res[[i]]
+      if (!is.null(codon_factors)) {
+        if (length(codon_factors[[i]]) != length(x)) stop("codon_factors do not match the codons of gene ", i)
+        x <- x * codon_factors[[i]]
+      }
+      x^peaky_power
+    })
   }
   # Step 1d (opt-in, codon_bias_options(zero_prob > 0)): replicate-shared masked codon sites, drawn after the pauses
   # with seed + 1000 (independent of the pause draws, identical for all libraries of a genome, also when
