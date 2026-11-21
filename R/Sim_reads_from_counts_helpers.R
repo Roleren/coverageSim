@@ -519,9 +519,11 @@ sequence_table_controller <- function() {
         alpha_matrix <- add_sequence_bias(simGenome, dt_range, seq_bias,
                                           region_ranges, lengths, region)
       }
-      # Codon identities for the library dwell layers (codon_dwell_options(), S12), only when they are active.
+      # Codon identities for the library dwell layers (codon_dwell_options(), S12) and the Pro-Pro stall / Pro-run
+      # layers (codon_bias_options(pp_stall, pro_run), S13), only when they are active.
       assign(paste0("seq_codons_", region),
-             if (add_sequence_bias && exists("codon_dwell", inherits = FALSE) && !is.null(codon_dwell)) {
+             if (add_sequence_bias && ((exists("codon_dwell", inherits = FALSE) && !is.null(codon_dwell)) ||
+                                       s13_needs_codons())) {
                translate_orf_seq(region_ranges, simGenome["genome"], is.sorted = TRUE, as = "codon",
                                  return.as.list = TRUE)
              })
@@ -712,7 +714,7 @@ apply_autocorrelation_kernel <- function(signal, kernel) {
 sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
                               seq_acf = 9, rnase_acf =
                                 c(0.5, 2, 1, 10, 2, 1, 0.5), region = "cds",
-                              codon_factors = NULL, peaky_power = 1) {
+                              codon_factors = NULL, peaky_power = 1, codons = NULL, a_shift = 1L) {
   # The start codon's weight says how often a decoding site sits on the start
   # codon itself. For an A-site table that is almost never, because initiation
   # places the start codon in the P site, not the A site. The chain below cannot
@@ -784,12 +786,17 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
   # Step 1c (opt-in, codon_bias_options(pause_sd > 0)): replicate-shared single-codon pauses, added after the
   # smoothing so the 19-codon window does not erase them. Drawn with a fixed seed so every library of a genome
   # gets the same pauses (t57: real replicates share single-codon structure the simulator lacked).
+  # With pause_sharp (S13) the same draws act as sharp pauses: a pause (factor > 1) takes its extra weight from the
+  # pause_flank_width neighbouring codons, conserving the local total; dips stay multiplicative.
   if (!is.null(alpha_matrix)) {
     cb <- codon_bias_options()
     if (cb$pause_sd > 0) {
       res <- with_gene_seed(cb, length(res), function(n) lapply(res, function(x) {
         hit <- stats::runif(length(x)) < cb$pause_prob
-        x * ifelse(hit, exp(stats::rnorm(length(x), 0, cb$pause_sd)), 1)
+        m <- ifelse(hit, exp(stats::rnorm(length(x), 0, cb$pause_sd)), 1)
+        if (isTRUE(cb$pause_sharp)) {
+          sharp_pause_redistribute(x, m, cb$pause_flank_width, cb$pause_flank_take)
+        } else x * m
       }))
     }
   }
@@ -805,6 +812,16 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       }
       x^peaky_power
     })
+  }
+  # Step 1c3 (opt-in, codon_bias_options(pp_stall, pro_run), port S13): codon-identity pauses after the dwell layers,
+  # so the stall takes its reads from the flanks relative to the model weights: Pro-run depletion, then the Pro-Pro
+  # stall kernel. a_shift: 1 when position i is the P site, 0 when it is the A site.
+  if (!is.null(alpha_matrix) && !is.null(codons)) {
+    cb <- codon_bias_options()
+    if (s13_needs_codons(cb)) {
+      if (length(codons) != length(res)) stop("codons do not match the genes of the codon weights")
+      res <- lapply(seq_along(res), function(i) apply_s13_codon_layers(res[[i]], codons[[i]], a_shift, cb))
+    }
   }
   # Step 1d (opt-in, codon_bias_options(zero_prob > 0)): replicate-shared masked codon sites, drawn after the pauses
   # with seed + 1000 (independent of the pause draws, identical for all libraries of a genome, also when
@@ -1118,34 +1135,74 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
 #'  3000 / 4000 per region, independent of the codon pause and zero draws), applied to the final per-nucleotide weights.
 #'  Window-aligned estimators recover \code{tau2}; windows straddling two blocks see about half of it.
 #' @param tau2_window block length in nt of the shared factor, default 90 (30 codons, the window of the density test).
+#' @param pause_sharp logical (S13; FALSE = original). TRUE makes every pause of \code{pause_sd} a sharp single-codon
+#'  change that conserves the local total: a pause with factor m > 1 gains (m - 1) x its weight, which its
+#'  \code{pause_flank_width} neighbours on each side give in proportion to their weights, so a peak has depleted flanks
+#'  as in real data (M16-acf: residual log density -0.14 / +0.10 / -0.09 at Pro-Pro stall offsets -1 / 0 / +1). Dips
+#'  (m < 1) stay multiplicative. FALSE multiplies the codon only. With dense pauses (pause_prob 0.5-0.9) the take cap
+#'  shrinks the codon-level variance and raises the autocorrelation at lags 2-10; meant for sparse pauses.
+#' @param pause_flank_width integer >= 1, number of neighbouring codons on each side that feed a sharp pause.
+#' @param pause_flank_take numeric in (0, 1], the largest fraction of its flanks' total weight one sharp pause can take.
+#' @param pp_stall logical (S13; FALSE = original), the Pro-Pro stall kernel: a codon whose P site follows a Pro (E
+#'  site) and is a Pro, with a non-Pro A site, takes \code{pp_stall_take} of the weight of each neighbour (P-site
+#'  offsets -w..-1, +1..+w) and is then multiplied by \code{pp_stall_peak}. Needs codon identities (codon-level
+#'  \code{seq_bias}); applied after the library codon dwell layers of \code{\link{codon_dwell_options}}.
+#' @param pp_stall_take numeric, even length 2w: the fraction each flank gives, ordered -w..-1, +1..+w. Default
+#'  c(0.20, 0.10), calibrated so that simulated reads reproduce the real residual profile (M16-acf: -0.14 / +0.10 /
+#'  -0.09 at offsets -1 / 0 / +1; simulated -0.14 / +0.10 / -0.09 with \code{codon_bias_preset("human")}, 1,000 genes at
+#'  30,000 reads). The direct translation 1 - exp(c(-0.14, -0.09)) = c(0.13, 0.09) gives only -0.08 / -0.08 on the flanks,
+#'  because the RNase blur of the simulator spreads part of the loss onto the next codons.
+#' @param pp_stall_peak numeric > 0, extra multiplier on the stall codon (1 = pure redistribution). Default 0.9: the
+#'  real peak gains less than its flanks lose (residual +0.10 vs -0.14 / -0.09), so the local total is not fully kept.
+#' @param pro_run logical (S13; FALSE = original), Pro-run depletion: the codon whose P site has nP Pro codons in P-site
+#'  +-2 gets \code{pro_run_factor[nP]}.
+#' @param pro_run_factor named numeric (names = Pro counts). Default: nP 3 0.766, 4-5 0.45 = exp(-0.266) / exp(-0.799),
+#'  the real minus additive-dwell-model log density by Pro count relative to nP = 0 (M16, m16_repeats/raw_pro.R:
+#'  observed 0 -0.28, 1 -0.32, 2 -0.44, 3 -0.64, 4-5 -1.18; model -0.09 .. -0.20). Add "2" = 0.90 for the milder nP = 2.
 #' @param seed integer seed for the per-genome draws.
 #' @return a list of options
 #' @export
 codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_genome_draws = FALSE,
-                               pause_sd = 0, pause_prob = 1, zero_prob = 0, tau2 = 0, tau2_window = 90L, seed = 1L) {
+                               pause_sd = 0, pause_prob = 1, zero_prob = 0, tau2 = 0, tau2_window = 90L,
+                               pause_sharp = FALSE, pause_flank_width = 1L, pause_flank_take = 0.5,
+                               pp_stall = FALSE, pp_stall_take = c(0.20, 0.10), pp_stall_peak = 0.9,
+                               pro_run = FALSE, pro_run_factor = c(`3` = 0.766, `4` = 0.45, `5` = 0.45), seed = 1L) {
   def <- list(sharpen = sharpen, sharpen_power = sharpen_power, per_genome_draws = per_genome_draws,
               pause_sd = pause_sd, pause_prob = pause_prob, zero_prob = zero_prob, tau2 = tau2,
-              tau2_window = tau2_window, seed = seed)
+              tau2_window = tau2_window, pause_sharp = pause_sharp, pause_flank_width = pause_flank_width,
+              pause_flank_take = pause_flank_take, pp_stall = pp_stall, pp_stall_take = pp_stall_take,
+              pp_stall_peak = pp_stall_peak, pro_run = pro_run, pro_run_factor = pro_run_factor, seed = seed)
   set <- getOption("coverageSim.codon_bias", list())
   bad <- setdiff(names(set), names(def)); if (length(bad)) stop("unknown coverageSim.codon_bias fields: ", toString(bad))
   def[names(set)] <- set
   def$tau2 <- normalize_tau2(def$tau2)
   stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1,
-            def$zero_prob >= 0, def$zero_prob < 1, all(def$tau2 >= 0), def$tau2_window >= 3)
+            def$zero_prob >= 0, def$zero_prob < 1, all(def$tau2 >= 0), def$tau2_window >= 3,
+            is.logical(def$pause_sharp), def$pause_flank_width >= 1, def$pause_flank_take > 0, def$pause_flank_take <= 1,
+            is.logical(def$pp_stall), length(def$pp_stall_take) %% 2L == 0L, length(def$pp_stall_take) >= 2L,
+            all(def$pp_stall_take >= 0), all(def$pp_stall_take < 1), def$pp_stall_peak > 0,
+            is.logical(def$pro_run), !is.null(names(def$pro_run_factor)), all(def$pro_run_factor > 0))
   def
 }
 
 #' Named codon-bias settings
-#' @param name "original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses) or "realistic"
+#' @param name "original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses), "realistic"
 #'  (the t57 base with pause_sd 1.0 and pause_prob 0.7, backclaude t75: keeps the t69 clumping/frame gains and the real peak ratio;
-#'  use together with \code{\link{realistic_rfp_settings}}). "t57" is unchanged.
+#'  use together with \code{\link{realistic_rfp_settings}}) or "human" (port S13, M16-acf: the original per-gene
+#'  sharpening and smoothing, which give the smooth positively autocorrelated background, plus per-genome pauses
+#'  pause_sd 0.9 / pause_prob 0.8, CDS tau2 0.06 (S9), the Pro-Pro stall kernel and the Pro-run depletion; simulated
+#'  per-codon ACF at lags 1-5 0.64 / 0.42 / 0.35 / 0.31 / 0.26 vs real 0.58 / 0.42 / 0.37 / 0.33 / 0.28). The
+#'  "realistic" preset has almost no autocorrelation beyond lag 1 (0.39 / 0.03 / 0 ...): its fixed sharpening and strong
+#'  pauses drown the smooth component. "t57" and "realistic" are unchanged.
 #' @return a list for \code{options(coverageSim.codon_bias = ...)}
 #' @export
-codon_bias_preset <- function(name = c("original", "t57", "realistic")) {
+codon_bias_preset <- function(name = c("original", "t57", "realistic", "human")) {
   switch(match.arg(name),
          original = list(),
          t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45),
-         realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7))
+         realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7),
+         human = list(per_genome_draws = TRUE, pause_sd = 0.9, pause_prob = 0.8, tau2 = c(cds = 0.06),
+                      pp_stall = TRUE, pro_run = TRUE))
 }
 
 # tau2 as a numeric vector named by region (cds, utr5, utr3): one number = all regions, missing names = 0
