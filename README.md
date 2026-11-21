@@ -82,6 +82,14 @@ You now have genome, gtf and tracks loaded in IGV
 
 `f <- simParalogFamilies(200, k = 3, divergence = 0.2, shares = "unequal", planted = list(member = 1, factor = 1/3), leak = 0.2)` builds near-identical genes on a codon grid with member-specific positions (fraction `divergence`), true member reads `Y`, an all-mapper track `A` (every multimapper counted in full at each member it maps to) and a unique-mapper track `U` (member-specific reads, plus optional mismatch-tolerant leakage from other members); `paralog_totals(f)` sums per library. Unequal expression, family size and a planted abundance change per condition are configurable. A separate layer, defaults of the existing simulator unchanged. Truth check (naive all-mapper vs U/q vs EM, E7/B rule): `scripts/s8_truth_check.R`.
 
+## 3'UTR plateaus, APA step and depleted 3' end (opt-in, S10)
+
+`options(coverageSim.utr3 = utr3_preset("human"))` makes the 3'UTR of `simNGScoverage()` structured instead of flat: replicated ribosome-specific plateaus (4.5 % of 90-nt windows, median fold 3, proximal half, RFP only), an internal poly(A) site in 54 % of 3'UTRs with 0.51x coverage downstream (all library types), and the last 25 nt at 0.07x (RFP). Sites are drawn once per genome, shared by all libraries, and written to `utr3_features.tsv` (`draw_utr3_features()` reproduces them). Defaults: all off. Sources and numbers: `?utr3_options`, `docs/EXPLAINABILITY_PORTS.md`.
+
+## Study, tissue and library codon dwell (opt-in, S12)
+
+`options(coverageSim.codon_dwell = codon_dwell_preset("human"))` with `assign_dwell_groups(count_table, study, tissue_group, peaky)` adds, on the codon weights: the H1 context dwell (offsets -10..+5 around the A site, `inst/extdata/codon_dwell_human.csv`), a codon x offset deviation per study and a smaller one per library (true dwell profiles correlate 0.88 within and 0.37 between studies, as in the human dwell atlas), tissue deltas (built in: "striated") and peaky libraries (1.5x top-10-codon share, 1.6x extra-Poisson variance). The profiles used are written to `codon_dwell_profiles.tsv` (`library_dwell_profile()`). Defaults: all off. See `?codon_dwell_options` and `docs/EXPLAINABILITY_PORTS.md`, which also lists every explainability iteration with its simulator setting and an example combining all ports.
+
 ## Learn end biases independently of the simulation inputs
 
 `learn_end_bias()` estimates 5-prime and 3-prime sequence preferences from a
