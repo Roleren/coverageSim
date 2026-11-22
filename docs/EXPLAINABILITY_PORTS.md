@@ -28,6 +28,7 @@ All settings below are opt-in: with none of them set, every simulation is identi
 | S11 | `simNGScoverage(technical_artifacts = list(spike_sites, ...))` | `spike_sites = 0` | e.g. `spike_sites = 2` |
 | S12 | `options(coverageSim.codon_dwell = ...)`: `codon_dwell_options()`, `codon_dwell_preset()`, `assign_dwell_groups()`, `library_dwell_profile()` | off | `codon_dwell_preset("human")` + `assign_dwell_groups()` |
 | S13 | `codon_bias_options(pp_stall, pp_stall_take, pp_stall_peak, pro_run, pro_run_factor, pause_sharp, pause_flank_width, pause_flank_take)` | off | `codon_bias_preset("human")` |
+| S14 | `codon_bias_options(sharpen = "contrast", contrast_mean, contrast_sd, smooth, field = residual_field_options(field_var, field_scales, shared, gene_sd, smear, gc_bias, study_unit))` | off | `codon_bias_preset("human_v2")` (+ `field$gc_bias = TRUE` for M22) |
 
 Truth tables written next to the libraries: `<library>_ground_truth.tsv` (`ground_truth = TRUE`),
 `<library>_spike_truth.tsv` (S11), `utr3_features.tsv` (S10), `codon_dwell_profiles.tsv` (S12).
@@ -159,6 +160,121 @@ that `simNGScoverage()` hands the codons to the layers. Not simulated: the real 
 (simulated raw at -1 / 0 / +1 -0.40 / -0.04 / -0.15 vs real -0.16 / +0.20 / -0.12: the bundled A-site table and the
 random sequences differ from the human dwell around Pro), the residual at -3 / +2 / +3, Gly runs (M16 fits a Pro x Gly
 table; only Pro is ported). Explainer truth check (v1.8b on the new simulation) still to run.
+
+**S13-check (11-21) false flags of the S13 preset** (MF/s13_checks/REPORT.md; t77 null suite, 2 seeds x 2 depths + 8
+ablations). Against the true simulated expectation `codon_bias_preset("human")` is clean (false density flags
+0.42-0.54%, frame false flags halve), but against a codon-table expectation it flags 20-27% of null windows (realistic
+6-7%; real density-fail 8.7%): per-gene sharpening -13 pts when fixed, CDS tau2 0.06 -5..-8 pts, Pro-Pro stall / Pro
+run 0. Simulator consequence: S14 (`codon_bias_preset("human_v2")`, 6.8% with the real band).
+
+**S14 (11-22) residual field, P-site smear after pauses, per-gene contrast, study-shared field, gene dispersion,
+footprint GC** (from the Fable review 2026-11-22 "Simulator" section, NC-1, NC-1b, S13-check, M22, M20-d; this port).
+Real data (merged unique track; MF/explainability_loop/REVIEW_fable_20261122.md, peek1-7 estimators):
+- within-gene variance of log O/E (M15 codon model E, genes >= 200 reads/codon) by block of 1 / 3 / 10 / 30 / 100
+  codons: 0.34 / 0.26 / 0.17 / 0.10 / 0.055 (white noise would give 0.011 at 30 codons): a smooth multi-scale field;
+- 30-codon window ACF of log O/E at lags 1-4: 0.51 / 0.41 / 0.35 / 0.29;
+- mean gene-centred log residual around strong peaks (O/E > 4, O > 5x gene mean): 2.15 / 1.36 / 0.96 / 0.70 at
+  0 / +-1 / +-2 / +-5 codons, symmetric, no -10 collision queue (M20-d: disome excess not significant);
+- per-gene slope of log O on log E: median 1.03, 5-95% 0.82-1.31;
+- study effects: window residuals of two 20-study pools r ~0.6 (E > 50); study-disjoint halves of all 536 studies
+  r 0.76-0.78 at E > 1e4, i.e. 70-75% of the reproducible residual shared, 25-30% half-specific (NC-1, NC-1b);
+- gene residual sd (30-codon windows, E > 300) 0.16-0.47 (10-90%), heavy right tail (top 1% of genes = 45% of NU reads);
+- footprint GC (M22): inverted U, -0.13 log below 37% or above 70% GC, +0.06 at 45-60%.
+
+S13-check showed why a new preset was needed: `codon_bias_preset("human")` flags 20-27% of null windows against a
+codon-table expectation (real density-fail rate 8.7%), mostly from the per-gene sharpening (-13 pts when fixed) and
+the independent tau2 blocks (5-8 pts), and its window ACF is ~0 (the tau2 blocks are independent).
+
+Settings (`?residual_field_options`, `?codon_bias_options`), all opt-in; with none set the simulation is unchanged:
+- `codon_bias_options(sharpen = "contrast", contrast_mean = 1.03, contrast_sd = 0.15)`: one exponent per gene,
+  drawn per genome (seed + 5000), replaces the per-gene sharpening (`sharpen_power` is not used in this mode).
+- `codon_bias_options(smooth = FALSE)`: skips the 19-codon `seq_acf` smoothing; the autocorrelation then comes from the
+  field and the smear.
+- `field = residual_field_options(field_var, field_scales, shared, gene_sd, study_unit)`: log-field
+  f = s_g (sqrt(shared) F_shared + sqrt(1 - shared) F_study), each F a sum of stationary AR(1) (discrete OU) processes
+  over codons (variance `field_var[k]`, correlation exp(-1 / `field_scales[k]`) per codon). F_shared is drawn per
+  genome (seed + 6000), F_study per study (seed + 6500 + hash of the study name): `study_unit = "study"` uses
+  `colData(count_table)$study` (one study when missing), `"library"` makes every library its own study pool.
+  s_g = exp(gene_sd z - gene_sd^2) (E[s^2] = 1): lognormal gene amplitude, heavy right tail.
+- `field$smear`: symmetric codon kernel (weights at offsets 0, 1, 2, ...) applied after the pauses, the S12 dwell, the
+  S13 stall / Pro-run layers and the field (edge codons renormalised), so a planted pause is smeared like offset
+  heterogeneity between merged libraries smears it.
+- `field$gc_bias = TRUE`: factor exp(h(GC)) on the codon whose P site is p, GC of the footprint P-site codons -4..+5
+  (`gc_window`), h piecewise linear through `gc_knots` (default the M22 inverted U), times `gc_strength`. Technical,
+  not in the preset by default.
+- `codon_bias_preset("human_v2")`: per-genome draws, contrast N(1.03, 0.15), no smoothing, pauses 0.75 / 0.8, Pro-Pro
+  stall + Pro run (S13), no tau2, field variances 0.04 / 0.05 / 0.155 at 3 / 12 / 400 codons, shared 0.72, gene_sd
+  0.62, smear (1, 0.06, 0.03, 0.02, 0.01), `study_unit = "library"`. The middle scale is 12 rather than 30 codons: with
+  30 the window lag-1 ACF overshoots (0.60-0.70) while the 100-codon block variance is already at target.
+
+Calibration (MF/s14_calib/: scripts/harness.R + seeds.sh, the peek1-7 estimators on simulated data; codon-table E =
+A-site table x gene total). Harness: 1,500 random-codon genes (300-1,500 codons, lognormal depth median 40 reads/codon,
+sdlog 1.4), two half-pools "A" / "B" (the study-disjoint halves), each the sum of 20 Dirichlet-multinomial libraries
+(dmn scale 6) with lognormal depth shares (sdlog 1.5); 4 seeds (gene sets and field draws), mean (range):
+
+| metric | real | `human_v2` | `human` (S13) |
+| --- | --- | --- | --- |
+| block var 1 / 3 / 10 / 30 / 100 codons | 0.34 / 0.26 / 0.17 / 0.10 / 0.055 | 0.365 / 0.261 / 0.166 / 0.106 / 0.064 (100: 0.053-0.075) | 0.84 / 0.60 / 0.42 / 0.25 / 0.080 |
+| window ACF lags 1-4 (gene-centred, genes >= 20 windows) | 0.51 / 0.41 / 0.35 / 0.29 | 0.53 / 0.38 / 0.30 / 0.22 (uncentred 0.52 / 0.38 / 0.30 / 0.23) | 0.02 / -0.03 / -0.04 / -0.04 |
+| peak flanks 0 / +-1 / +-2 / +-5 | 2.15 / 1.36 / 0.96 / 0.70 | 2.11 / 1.44 / 0.97 / 0.64 | 2.26 / 1.57 / 0.98 / 0.55 |
+| gene residual sd 10 / 50 / 90 / 99% | 0.16 / - / 0.47 / heavy tail | 0.160 / 0.240 / 0.448 / 0.86 | 0.39 / 0.50 / 0.63 / 0.76 |
+| split-half window r (E > 50 / E > 1e4) | ~0.6 (20-study pools) / 0.76-0.78 (NC-1) | 0.75 / 0.77 | 0.98 / 0.99 |
+| table-E flags, real band (NP + frozen tau2) | 8.7% (real density-fail) | 7.6% (7.4-7.8) | 24.5% |
+| table-E flags, legacy analyze.R band (NP only) | - | 19.5% | 45.3% |
+| per-gene slope, 5 / 50 / 95% relative to the pooled slope | 0.80 / 1.00 / 1.27 | 0.60 / 1.00 / 1.38 | 0.79 / 0.99 / 1.20 |
+
+Full pipeline (MF/s14_calib/scripts/sim_s14.R + analyze_s14.R + metrics_s14.R: the S13-check / t77 null suite,
+`simNGScoverage()` with `realistic_rfp_settings()`, S13-check genomes seeds 211 / 212 (300 genes, human lengths),
+interceptMean 10, 6 libraries each its own study; O = WT1 (analyze.R) or WT1 + WT2 (metrics_s14.R)):
+
+| metric | real | `human_v2` | `human_v2` + gc_bias | `human` (S13) | `realistic` (S5) |
+| --- | --- | --- | --- | --- | --- |
+| false density flags vs true E (analyze.R) | - | 0.58% | 0.36% | 0.46% | 0.53% |
+| table-E flags, legacy band, WT1 (analyze.R; S13-check metric) | - | 13.9% | 13.5% | 26.8% | 7.4% |
+| table-E flags, real band (NP + tau2), WT1 + WT2 | 8.7% | 6.8% | 6.8% | 19.6% | 3.0% |
+| table-E flags, legacy band, WT1 + WT2 | - | 16.6% | 16.9% | 37.1% | 10.1% |
+| split-half window r (WT1 vs WT2, E > 50) | ~0.6 | 0.71 | 0.69 | 0.93 | 0.78 |
+| gene residual sd 10 / 50 / 90% | 0.16 / - / 0.47 | 0.156 / 0.235 / 0.411 | 0.160 / 0.238 / 0.375 | 0.31 / 0.46 / 0.61 | 0.16 / 0.22 / 0.29 |
+| frame sd / clumping / codon r (600-1200) | 0.052 / 2.7 / 0.45-0.54 | 0.067 / 3.11 / 0.39 | 0.070 / 3.13 / 0.38 | 0.070 / 5.75 / 0.72 | 0.067 / 4.25 / 0.59 |
+| codon peak median / p95, zero share, skew | 9-12 / -, 0.57-0.60, - | 6.5 / 12.7, 0.21, 1.94 | 7.0 / 13.0, 0.21, 1.98 | 14.0 / 35.3, 0.31, 3.82 | 10.0 / 23.5, 0.25, 2.85 |
+
+At this depth only 1-11 genes reach the codon-level thresholds (block variance, peak flanks), so those are checked in
+the harness and in a deeper run (below). The legacy analyze.R band has no tau2 above E = 682, so any realistic
+window-level field raises it (real data would fail it too); the real explainer band (NP + frozen tau2) is the like-for-like
+comparison with the real 8.7%. Clumping improves (3.1 vs 4.25-5.75, real 2.7); the codon peak height is lower than
+real (6.5-7 vs 9-12) and the zero share lower (0.21 vs 0.57-0.60; add S6 `zero_prob`).
+
+Deeper full pipeline (sim_s14_deep.R: interceptMean 12, 2 WT libraries = two study pools, seeds 211 + 212, 61 genes
+with >= 50 reads/codon): block variance (genes >= 50 reads/codon) 0.50 / 0.29 / 0.17 / 0.10 / 0.063 (the 1-codon value
+carries Poisson and fragment-geometry noise at 50-200 reads/codon; 11 genes >= 200 reads/codon give 0.67 / 0.43 / 0.28 /
+0.18 / 0.12, dominated by a few high-amplitude genes), peak flanks 2.15 / 1.34 / 0.90 / 0.55 (71 peaks; real 2.15 /
+1.36 / 0.96 / 0.70), uncentred window ACF 0.39 / 0.20 / 0.08 / 0.07 (few windows with E > 1000; below the harness
+0.52 / 0.38 / 0.30 / 0.23), gene residual sd 0.154 / 0.230 / 0.421, split r 0.72, table-E flags 7.7% with the real band
+(legacy WT1 band 19.1%), false flags vs true E 0.48%, frame sd 0.069, clumping 3.12, codon r 0.39 / 0.50.
+
+Footprint GC on simulated reads (gc_check.R; `human_v2` + gc_bias vs `human_v2`, same seeds, 363,204 codons, centred
+log O ratio by footprint GC): <= 37% -0.116, 37-45% -0.028, 45-60% +0.031, 60-70% -0.034, >= 70% -0.139 (M22 target
+-0.13 / +0.06 / -0.13; the smear and the RNase blur dilute the factor a little).
+
+Tests (tests/testthat/test_residual_field.R): options default off / validation / all-off field = identical weights;
+AR(1) variance and lag correlation exp(-1/L) (+-3-5%); two studies share `shared` of the field (0.70 +- 0.03), the same
+study gets the same field, sd(log s_g) = gene_sd and E[s^2] = 1, draws leave the session RNG alone; smear kernel exact
+weights and interior total; contrast exponents mean 1.03 / sd 0.15 and log weights exactly linear in the log table with
+the gene's exponent; footprint GC per P-site codon (P- and A-site indexing) and h at the knots, log weight change = h,
+45-60% vs <= 37% / >= 70% GC difference 0.19; `field_study()` (study column, library unit, fallback). Preset test (500
+genes, two pools of 4 libraries, ~17 s): block var 0.381 / 0.265 / 0.167 / 0.108 / 0.065 (each within 1.5x of real),
+gene-centred window ACF 0.49 / 0.37 / 0.27 / 0.20 (+-0.15), flanks 2.06 / 1.35 / 0.88 / 0.54 (+-0.35, monotone),
+split r 0.72 (0.6-0.9), gene sd 10 / 90% 0.158 / 0.443, table-E flags 10.6% with a simplified real band (4-13%).
+
+Open: (1) the per-gene slope spread is wider in the simulation than in real data even with contrast_sd = 0 (0.67-1.36
+relative): the slope estimator is noisier here because the A-site table spreads log E less than the real context model,
+so the measured spread does not identify contrast_sd; the preset keeps the review's N(1.03, 0.15). The absolute slope vs
+the table is ~0.55 because smear + RNase blur flatten codon contrast; the real 1.03 is against a model fitted to smeared
+data. (2) Window ACF lags 3-4 0.06-0.07 below real and the 100-codon block variance 0.01 above. (3) The 20-study split r
+(0.75) is above the real ~0.6 at E > 50 because the harness windows are deeper; the deep r matches NC-1. (4) A library
+sees the full field variance; a merged pool of k equally deep study pools sees sum(field_var) (0.72 + 0.28 / k): the
+preset is calibrated for two pools (k = 2). (5) The field is in-frame and multiplicative only (no exon steps or
+isoform / RNA-abundance mechanism, Fable hypothesis 1; M23 RNA term).
 
 ## Explainer iterations (E rows)
 
@@ -344,6 +460,29 @@ merged monosome windows; a fitted distance term worsens held-out fit (MF/m8_nasc
 peaks with depleted flanks; real ACF 0.58 / 0.42 / 0.37 / 0.33 / 0.28 (MF/m16_repeats/). Simulator: S13
 (`codon_bias_preset("human")`).
 
+**M20-d (11-22) collisions at NU bumps, bootstrap re-run** (paper Supp 2 draft). NU excess vs monosome 1.41
+(0.96-1.96) and 1.07 (0.96-1.18): CIs include 1. Bumps are real ribosome density, not a significant collision excess.
+Simulator: no collision queue; the S14 smear kernel is symmetric (no -10 shoulder).
+
+**M22 (11-22) wide / non-additive context and footprint GC** (MF/m22_widecontext/). xgboost on the per-codon residual
+(features -40..+10, pairs / triplets, identity -2..+2, footprint GC): per-codon held-out R2 12.8%, windows abs residual
+-7.1%; footprint GC is 16% of the SHAP mass, an inverted U (-0.13 log below 37% or above 70% GC, +0.06 at 45-60%),
+technical. Simulator: S14 `residual_field_options(gc_bias = TRUE)` (opt-in, not in the preset); the local
+non-additive E-P-A context is not simulated.
+
+## Noise ceiling and band (NC rows, band candidates)
+
+**NC-1 / NC-1b (11-22) noise ceiling from study-disjoint halves** (10 balanced splits over 536 studies / 5,334
+libraries; NC-1b on v1.11 E). E > 1e4: FEV 0.49-0.55, understood-window residual r between halves 0.76-0.78, tau2_rep
+0.032-0.042 (= the frozen tau2, about 4x the merged replicate noise 0.0076), model fail 6.5-7.9% vs oracle 2.1%. The
+residual is a reproducible multi-study regional signal, 70-75% shared between halves. Simulator: S14 log-field
+(`shared = 0.72` between libraries = study pools; split-half window r 0.71-0.77 in the calibration).
+
+**v1.12-band (11-22, candidate) replicate-noise band** v = kappa_b (E + sigma2_b H_M,g E^2) fitted from study-half
+differences: band rel sd at E > 1e4 0.04-0.05 (old 0.20-0.24), NU 3.34 -> 9.29%, perfect-model null 0.52%. Simulator:
+no setting; under this band the S14 field (window sd ~0.3) would be flagged as it should, since it is model misfit,
+not noise.
+
 ## Simulating realistic human Ribo-seq
 
 The ports combine. A study design with three studies, one of them striated muscle with peaky libraries:
@@ -373,7 +512,11 @@ Isoform mixtures (S7) and paralog families (S8) are separate grid-level simulato
 
 For the codon-level structure (smooth autocorrelated background, Pro-Pro stalls with depleted flanks, Pro-run
 depletion) use `codon_bias_preset("human")` (S13) in place of "realistic" and add the UTR tau2 values of S9; S13 has not
-yet been checked against the S4-S6 clumping and peak metrics, which were tuned on "realistic".
+yet been checked against the S4-S6 clumping and peak metrics, which were tuned on "realistic". For explainer truth
+checks against a codon-table expectation use `codon_bias_preset("human_v2")` (S14): the residual is then a multi-scale,
+mostly library-shared field with heterogeneous gene amplitudes (7% table-E flags with the real band instead of 20-27%);
+add `field = modifyList(codon_bias_preset("human_v2")$field, list(gc_bias = TRUE))` for the footprint-GC bias, and the
+UTR tau2 values of S9 (the preset has no CDS tau2: the field replaces it).
 
 Known gaps (real vs simulated): per-gene frame profiles (S3), clumping (S5-S6), shorter 3'UTR plateau reads and
 study-specific plateau amplitude (S10), read-length-specific P-site offset errors (GW1.3), ER / nascent-chain classes
