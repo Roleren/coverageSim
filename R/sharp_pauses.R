@@ -10,7 +10,7 @@
 
 # Does any S13 layer need the codon identities of the genes?
 s13_needs_codons <- function(cb = codon_bias_options()) {
-  isTRUE(cb$pp_stall) || isTRUE(cb$pro_run)
+  isTRUE(cb$pp_stall) || isTRUE(cb$pro_run) || isTRUE(cb$field$gc_bias)
 }
 
 # Sum of v over the flanks -width..-1, 1..width of every position (positions outside the gene count as 0).

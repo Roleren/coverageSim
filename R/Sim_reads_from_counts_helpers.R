@@ -714,7 +714,8 @@ apply_autocorrelation_kernel <- function(signal, kernel) {
 sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
                               seq_acf = 9, rnase_acf =
                                 c(0.5, 2, 1, 10, 2, 1, 0.5), region = "cds",
-                              codon_factors = NULL, peaky_power = 1, codons = NULL, a_shift = 1L) {
+                              codon_factors = NULL, peaky_power = 1, codons = NULL, a_shift = 1L,
+                              study = NULL) {
   # The start codon's weight says how often a decoding site sits on the start
   # codon itself. For an A-site table that is almost never, because initiation
   # places the start codon in the P site, not the A site. The chain below cannot
@@ -765,9 +766,12 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
 
       cb <- codon_bias_options()
       if (cb$sharpen == "fixed") scalers <- rep(1, length(res))
+      # S14: one contrast exponent per gene, N(contrast_mean, contrast_sd), drawn per genome.
+      if (cb$sharpen == "contrast") scalers <- draw_contrast_exponents(length(res), cb)
       # Scale signal before auto correlation smearing
+      power <- if (cb$sharpen == "contrast") 1 else cb$sharpen_power   # contrast mode: the exponent is the gene's own
       res <- lapply(res, function(x) {
-        x**cb$sharpen_power
+        x**power
       })
       quantile <- with_gene_seed(cb, length(res), function(n)
         sample(seq(7, 9), n, TRUE, prob = c(0.4, 0.5, 0.1))/10)
@@ -780,8 +784,11 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       })
     }
     if (any(c("sin","cos") %in% as.character(quote(1)))) stop("Implement me")
-    res <- lapply(res, function(alpha_vec)
-      eval(seq_acf))
+    # S14: codon_bias_options(smooth = FALSE) skips the smoothing of codon weights (gene alpha matrices only).
+    if (is.null(alpha_matrix) || isTRUE(codon_bias_options()$smooth)) {
+      res <- lapply(res, function(alpha_vec)
+        eval(seq_acf))
+    }
   }
   # Step 1c (opt-in, codon_bias_options(pause_sd > 0)): replicate-shared single-codon pauses, added after the
   # smoothing so the 19-codon window does not erase them. Drawn with a fixed seed so every library of a genome
@@ -822,6 +829,12 @@ sim_sequence_bias <- function(ideal_coverage, lengths, alpha_matrix,
       if (length(codons) != length(res)) stop("codons do not match the genes of the codon weights")
       res <- lapply(seq_along(res), function(i) apply_s13_codon_layers(res[[i]], codons[[i]], a_shift, cb))
     }
+  }
+  # Steps 1f-1h (opt-in, codon_bias_options(field = residual_field_options(...)), port S14): footprint-GC factor,
+  # multi-scale study-shared log-field and the P-site smear kernel, after the pauses so a pause is smeared like real
+  # offset heterogeneity smears it. study: the library's study (field part not shared between studies).
+  if (!is.null(alpha_matrix)) {
+    res <- apply_residual_field(res, codon_bias_options()$field, codons, a_shift, study)
   }
   # Step 1d (opt-in, codon_bias_options(zero_prob > 0)): replicate-shared masked codon sites, drawn after the pauses
   # with seed + 1000 (independent of the pause draws, identical for all libraries of a genome, also when
@@ -1159,6 +1172,15 @@ fill_missing_seqlengths <- function(seqinfo, fasta_file) {
 #' @param pro_run_factor named numeric (names = Pro counts). Default: nP 3 0.766, 4-5 0.45 = exp(-0.266) / exp(-0.799),
 #'  the real minus additive-dwell-model log density by Pro count relative to nP = 0 (M16, m16_repeats/raw_pro.R:
 #'  observed 0 -0.28, 1 -0.32, 2 -0.44, 3 -0.64, 4-5 -1.18; model -0.09 .. -0.20). Add "2" = 0.90 for the milder nP = 2.
+#' @param contrast_mean,contrast_sd numeric (S14), used when \code{sharpen = "contrast"}: every gene raises its codon
+#'  weights to its own exponent N(contrast_mean, contrast_sd^2) (floored at 0.05; \code{sharpen_power} is not used),
+#'  drawn per genome with \code{seed} + 5000, instead of the original per-gene sharpening (which is set by the codon
+#'  spread of the gene and too strong: S13-check, 13 of 20-27\% false table-E flags). Real data (Fable review
+#'  hypothesis 7, peek7): per-gene slope of log O on log E median 1.03, 5-95\% 0.82-1.31.
+#' @param smooth logical (S14; TRUE = original), apply the \code{seq_acf} smoothing of the codon weights. FALSE leaves
+#'  the autocorrelation to the residual field and the smear kernel of \code{field}.
+#' @param field list of \code{\link{residual_field_options}} arguments (S14): multi-scale study-shared log-field,
+#'  P-site smear kernel applied after the pauses, footprint-GC bias. Default \code{list()} = all off.
 #' @param seed integer seed for the per-genome draws.
 #' @return a list of options
 #' @export
@@ -1166,17 +1188,22 @@ codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_g
                                pause_sd = 0, pause_prob = 1, zero_prob = 0, tau2 = 0, tau2_window = 90L,
                                pause_sharp = FALSE, pause_flank_width = 1L, pause_flank_take = 0.5,
                                pp_stall = FALSE, pp_stall_take = c(0.20, 0.10), pp_stall_peak = 0.9,
-                               pro_run = FALSE, pro_run_factor = c(`3` = 0.766, `4` = 0.45, `5` = 0.45), seed = 1L) {
+                               pro_run = FALSE, pro_run_factor = c(`3` = 0.766, `4` = 0.45, `5` = 0.45),
+                               contrast_mean = 1.03, contrast_sd = 0.15, smooth = TRUE, field = list(), seed = 1L) {
   def <- list(sharpen = sharpen, sharpen_power = sharpen_power, per_genome_draws = per_genome_draws,
               pause_sd = pause_sd, pause_prob = pause_prob, zero_prob = zero_prob, tau2 = tau2,
               tau2_window = tau2_window, pause_sharp = pause_sharp, pause_flank_width = pause_flank_width,
               pause_flank_take = pause_flank_take, pp_stall = pp_stall, pp_stall_take = pp_stall_take,
-              pp_stall_peak = pp_stall_peak, pro_run = pro_run, pro_run_factor = pro_run_factor, seed = seed)
+              pp_stall_peak = pp_stall_peak, pro_run = pro_run, pro_run_factor = pro_run_factor,
+              contrast_mean = contrast_mean, contrast_sd = contrast_sd, smooth = smooth, field = field, seed = seed)
   set <- getOption("coverageSim.codon_bias", list())
   bad <- setdiff(names(set), names(def)); if (length(bad)) stop("unknown coverageSim.codon_bias fields: ", toString(bad))
   def[names(set)] <- set
   def$tau2 <- normalize_tau2(def$tau2)
-  stopifnot(def$sharpen %in% c("per_gene", "fixed"), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1,
+  f <- def$field; f$active <- NULL
+  def$field <- do.call(residual_field_options, as.list(f))
+  stopifnot(def$sharpen %in% c("per_gene", "fixed", "contrast"), def$contrast_mean > 0, def$contrast_sd >= 0,
+            is.logical(def$smooth), def$pause_sd >= 0, def$pause_prob >= 0, def$pause_prob <= 1,
             def$zero_prob >= 0, def$zero_prob < 1, all(def$tau2 >= 0), def$tau2_window >= 3,
             is.logical(def$pause_sharp), def$pause_flank_width >= 1, def$pause_flank_take > 0, def$pause_flank_take <= 1,
             is.logical(def$pp_stall), length(def$pp_stall_take) %% 2L == 0L, length(def$pp_stall_take) >= 2L,
@@ -1194,15 +1221,29 @@ codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_g
 #'  per-codon ACF at lags 1-5 0.64 / 0.42 / 0.35 / 0.31 / 0.26 vs real 0.58 / 0.42 / 0.37 / 0.33 / 0.28). The
 #'  "realistic" preset has almost no autocorrelation beyond lag 1 (0.39 / 0.03 / 0 ...): its fixed sharpening and strong
 #'  pauses drown the smooth component. "t57" and "realistic" are unchanged.
+#'  "human_v2" (port S14, Fable review 2026-11-22): replaces the per-gene sharpening, the smoothing and tau2 of "human"
+#'  by a per-gene contrast exponent N(1.03, 0.15), a multi-scale log-field (AR(1) components of 3 / 12 / 400 codons,
+#'  variances 0.04 / 0.05 / 0.155, 72\% shared between libraries, per-gene amplitude sd 0.62) and a P-site smear kernel
+#'  (1, 0.06, 0.03, 0.02, 0.01 at offsets 0..4) after the pauses (pause_sd 0.75 / pause_prob 0.8, Pro-Pro stalls and Pro
+#'  runs as in "human"); every library is its own study pool (\code{study_unit = "library"}). Calibrated on two merged
+#'  half-pools (codon-table flags 7.6\% vs the real density-fail rate 8.7\%, "human" 20-27\%): see
+#'  \code{\link{residual_field_options}} and docs/EXPLAINABILITY_PORTS.md (S14) for the targets met. Add
+#'  \code{field$gc_bias = TRUE} for the footprint-GC library bias (M22).
 #' @return a list for \code{options(coverageSim.codon_bias = ...)}
 #' @export
-codon_bias_preset <- function(name = c("original", "t57", "realistic", "human")) {
+codon_bias_preset <- function(name = c("original", "t57", "realistic", "human", "human_v2")) {
   switch(match.arg(name),
          original = list(),
          t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45),
          realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7),
          human = list(per_genome_draws = TRUE, pause_sd = 0.9, pause_prob = 0.8, tau2 = c(cds = 0.06),
-                      pp_stall = TRUE, pro_run = TRUE))
+                      pp_stall = TRUE, pro_run = TRUE),
+         human_v2 = list(per_genome_draws = TRUE, sharpen = "contrast", contrast_mean = 1.03, contrast_sd = 0.15,
+                         smooth = FALSE, pause_sd = 0.75, pause_prob = 0.8, pp_stall = TRUE, pro_run = TRUE,
+                         field = residual_field_options(field_var = c(0.04, 0.05, 0.155), field_scales = c(3, 12, 400),
+                                                        shared = 0.72, gene_sd = 0.62,
+                                                        smear = c(1, 0.06, 0.03, 0.02, 0.01),
+                                                        study_unit = "library")))
 }
 
 # tau2 as a numeric vector named by region (cds, utr5, utr3): one number = all regions, missing names = 0

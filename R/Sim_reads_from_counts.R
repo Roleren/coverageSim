@@ -591,7 +591,8 @@ nt_coverage_all_regions <- function(count_table_regions, libClass,
                                  rnase_bias[[libtype]], region = region,
                                  codon_factors = dwell$factors, peaky_power = dwell$power,
                                  codons = get0(paste0("seq_codons_", region), envir = env, inherits = FALSE),
-                                 a_shift = get0("dwell_a_shift", envir = env, inherits = FALSE, ifnotfound = 1L))
+                                 a_shift = get0("dwell_a_shift", envir = env, inherits = FALSE, ifnotfound = 1L),
+                                 study = field_study(count_table_regions))
         if (!is.null(utr3)) {
           res <- lapply(seq_along(res), function(i) apply_utr3_factors(res[[i]], lengths[i], i, libtype, utr3))
         }
