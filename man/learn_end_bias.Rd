@@ -18,7 +18,9 @@ learn_end_bias(
   dmn_min_reads = 50L,
   dmn_min_sites = 20L,
   acf_max_lag = 9L,
-  collapsed_reads = FALSE
+  collapsed_reads = FALSE,
+  soft_clips = c("drop", "trim"),
+  added_base = NULL
 )
 }
 \arguments{
@@ -68,6 +70,37 @@ the number after \code{_x}. With FALSE every line counts as one read, so
 in a collapsed BAM a fragment seen 250 times would count as much as one
 seen once. With TRUE every read name must end in \code{_x} and a number,
 otherwise the function stops.}
+
+\item{soft_clips}{"drop" (default, as before) or "trim". With "drop" a read
+with a soft clip at either end is not used. With "trim" soft-clipped reads
+are used with their aligned part (the clipped bases are ignored and the
+read end is the first/last aligned base). "trim" is only right when the
+clipped bases are not part of the footprint (non-templated additions,
+adapter or UMI remnants). When the clip is a footprint base that did not
+match the genome (sequencing error, SNP), "trim" moves the read end one or
+more nucleotides into the footprint and blurs the end preference; "drop"
+is then better. The clip shares per end are always reported in
+diagnostics$soft_clips, whichever option is used.}
+
+\item{added_base}{NULL (default, no correction), "auto", or one of "A",
+"C", "G", "T": the non-templated nucleotide that the library preparation
+adds in front of the footprint 5' end (circularization libraries: mostly
+T). Where the genome base upstream of the footprint is the same
+nucleotide, the added base aligns, is not soft clipped and the read looks
+one nucleotide longer with its 5' end one nucleotide too early
+("hidden" added base); its 5' motif then starts with the added base and
+inflates that motif's weight. With added_base set, reads whose only 5'
+clip is the added base are trimmed and used (their aligned 5' end is the
+footprint end), and the expected number of hidden reads is removed from
+the reads whose 5' motif starts with the added base: per read length L,
+hidden = (trimmed added-base reads of length L - 1) x q / (1 - q), with q
+the share of the added base just upstream of the 5' end of unclipped reads
+that do not start with it. Hidden reads only reach the learner when the
+site offset of L is one more than that of L - 1 (otherwise they are off
+frame and already excluded). "auto" picks the most common 1-nt 5' clip
+base when 1-nt 5' clips are at least 1 percent of the reads and that base
+makes up at least half of them; otherwise no correction is made. The
+estimate is in diagnostics$added_base. Needs read sequences in the BAM.}
 }
 \value{
 A list containing five_prime_bias, three_prime_bias, codon_bias and

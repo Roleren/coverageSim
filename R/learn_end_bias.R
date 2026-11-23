@@ -28,6 +28,35 @@
 #'   in a collapsed BAM a fragment seen 250 times would count as much as one
 #'   seen once. With TRUE every read name must end in \code{_x} and a number,
 #'   otherwise the function stops.
+#' @param soft_clips "drop" (default, as before) or "trim". With "drop" a read
+#'   with a soft clip at either end is not used. With "trim" soft-clipped reads
+#'   are used with their aligned part (the clipped bases are ignored and the
+#'   read end is the first/last aligned base). "trim" is only right when the
+#'   clipped bases are not part of the footprint (non-templated additions,
+#'   adapter or UMI remnants). When the clip is a footprint base that did not
+#'   match the genome (sequencing error, SNP), "trim" moves the read end one or
+#'   more nucleotides into the footprint and blurs the end preference; "drop"
+#'   is then better. The clip shares per end are always reported in
+#'   diagnostics$soft_clips, whichever option is used.
+#' @param added_base NULL (default, no correction), "auto", or one of "A",
+#'   "C", "G", "T": the non-templated nucleotide that the library preparation
+#'   adds in front of the footprint 5' end (circularization libraries: mostly
+#'   T). Where the genome base upstream of the footprint is the same
+#'   nucleotide, the added base aligns, is not soft clipped and the read looks
+#'   one nucleotide longer with its 5' end one nucleotide too early
+#'   ("hidden" added base); its 5' motif then starts with the added base and
+#'   inflates that motif's weight. With added_base set, reads whose only 5'
+#'   clip is the added base are trimmed and used (their aligned 5' end is the
+#'   footprint end), and the expected number of hidden reads is removed from
+#'   the reads whose 5' motif starts with the added base: per read length L,
+#'   hidden = (trimmed added-base reads of length L - 1) x q / (1 - q), with q
+#'   the share of the added base just upstream of the 5' end of unclipped reads
+#'   that do not start with it. Hidden reads only reach the learner when the
+#'   site offset of L is one more than that of L - 1 (otherwise they are off
+#'   frame and already excluded). "auto" picks the most common 1-nt 5' clip
+#'   base when 1-nt 5' clips are at least 1 percent of the reads and that base
+#'   makes up at least half of them; otherwise no correction is made. The
+#'   estimate is in diagnostics$added_base. Needs read sequences in the BAM.
 #' @param ridge Positive penalty shrinking log preferences towards zero.
 #'   The per-length fragment totals are conditioned on, not learned as unbiased
 #'   length probabilities. Geometry probabilities only select supported lengths.
@@ -61,10 +90,13 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
                            k = 1L, by_length = FALSE, min_mapq = 20,
                            ridge = 1, maxit = 500L,
                            dmn_min_reads = 50L, dmn_min_sites = 20L,
-                           acf_max_lag = 9L, collapsed_reads = FALSE) {
+                           acf_max_lag = 9L, collapsed_reads = FALSE,
+                           soft_clips = c("drop", "trim"), added_base = NULL) {
   validate_end_learning_input(bam, fasta, transcripts, cds, k, by_length,
                               min_mapq, collapsed_reads, ridge, maxit,
                               dmn_min_reads, dmn_min_sites, acf_max_lag)
+  soft_clips <- match.arg(soft_clips)
+  validate_added_base(added_base)
   geometry <- normalize_fragment_geometry(fragment_geometry)
   if (is.null(geometry$distribution)) {
     stop("Learning requires an explicit length/offset distribution")
@@ -78,8 +110,28 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
   models <- transcript_models(transcripts, fasta)
   opportunities <- end_learning_opportunities(models, cds, distribution, k)
   if (!nrow(opportunities)) stop("No valid CDS fragment opportunities")
-  observed <- read_end_learning_bam(bam, min_mapq, collapsed_reads)
-  counted <- count_end_learning_reads(opportunities, observed$reads)
+  observed <- read_end_learning_bam(bam, min_mapq, collapsed_reads,
+                                    keep_clips = TRUE,
+                                    clip_bases = !is.null(added_base))
+  clip_diagnostics <- soft_clip_summary(observed$reads)
+  selected <- select_clipped_reads(observed$reads, soft_clips, added_base,
+                                   clip_diagnostics)
+  counted <- count_end_learning_reads(opportunities, selected$reads)
+  hidden <- NULL
+  if (!is.null(selected$added_base)) {
+    trimmed <- count_end_learning_reads(opportunities, selected$added_reads)
+    hidden <- hidden_added_base_correction(counted$data, trimmed$data,
+                                           distribution, selected$added_base)
+    counted$data <- hidden$data
+    counted$diagnostics[["used"]] <- counted$diagnostics[["used"]] +
+      trimmed$diagnostics[["used"]] - hidden$removed
+    counted$diagnostics[["unmatched_or_ambiguous"]] <-
+      counted$diagnostics[["unmatched_or_ambiguous"]] +
+      trimmed$diagnostics[["unmatched_or_ambiguous"]]
+    selected$reads <- data.table::rbindlist(list(selected$reads, selected$added_reads))
+  }
+  observed$reads <- selected$reads[, .(count = sum(count)), by = .(
+    chromosome, position, five_position, strand, cigar, fragment_length)]
   if (!sum(counted$data$count)) stop("No usable reads match the supplied CDS geometry")
   fit <- fit_end_preferences(counted$data, k, by_length, ridge, maxit)
   frame_fit <- if (by_length) {
@@ -108,11 +160,17 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
   fit$diagnostics$auto_correlation <- structure$acf
   fit$diagnostics$frame_counts <- frame_fit$diagnostics
   fit$diagnostics$reads <- c(observed$diagnostics, counted$diagnostics)
+  fit$diagnostics$soft_clips <- clip_diagnostics
+  fit$diagnostics$added_base <- if (is.null(hidden)) {
+    list(base = NA_character_, reason = selected$added_base_reason)
+  } else hidden$diagnostics
   fit$provenance <- list(
     bam = normalizePath(bam), fasta = normalizePath(fasta),
     transcript_ids = names(transcripts), distribution = distribution,
     site_reference = geometry$site_reference, k = k, by_length = by_length,
-    min_mapq = min_mapq, collapsed_reads = collapsed_reads, ridge = ridge, maxit = maxit,
+    min_mapq = min_mapq, collapsed_reads = collapsed_reads,
+    soft_clips = soft_clips, added_base = if (is.null(added_base)) NA_character_ else added_base,
+    ridge = ridge, maxit = maxit,
     dmn_min_reads = dmn_min_reads, dmn_min_sites = dmn_min_sites,
     acf_max_lag = acf_max_lag,
     model = paste("conditional multinomial: transcript:length + codon +",
@@ -218,6 +276,7 @@ end_learning_opportunities <- function(models, cds, distribution, k) {
         chromosome = as.character(GenomicRanges::seqnames(model$exons)[1]),
         strand = model$strand, codon = codons,
         five = substring(sequences, 1L, k),
+        upstream = substring(model$sequence, starts - 1L, starts - 1L),
         three = substring(sequences, length_value - k + 1L, length_value)
       )
       result[grepl("^[ACGT]+$", sequences) & grepl("^[ACGT]{3}$", codon)]
@@ -616,41 +675,70 @@ read_multiplicity <- function(qname, records, collapsed_reads) {
   as.integer(count)
 }
 
-read_end_learning_bam <- function(bam, min_mapq, collapsed_reads = FALSE) {
+read_end_learning_bam <- function(bam, min_mapq, collapsed_reads = FALSE,
+                                  keep_clips = FALSE, clip_bases = FALSE) {
   fields <- c("rname", "pos", "cigar", "strand", "flag", "mapq",
-              if (collapsed_reads) "qname")
+              if (collapsed_reads) "qname", if (clip_bases) "seq")
   file <- Rsamtools::BamFile(bam, yieldSize = 500000L)
   open(file)
   on.exit(close(file))
   reads <- data.table::data.table(chromosome = character(), position = integer(),
     five_position = integer(), strand = character(), cigar = character(),
     fragment_length = integer(), count = integer())
+  if (keep_clips) {
+    reads[, `:=`(five_clip = integer(), three_clip = integer(),
+                 five_clip_base = character())]
+  }
+  keys <- c("chromosome", "position", "five_position", "strand", "cigar",
+            "fragment_length",
+            if (keep_clips) c("five_clip", "three_clip", "five_clip_base"))
   diagnostics <- c(bam_records = 0, flag_or_mapq_or_NH_excluded = 0,
                    unsupported_cigar = 0, reads = 0)
   repeat {
     raw <- Rsamtools::scanBam(file,
       param = Rsamtools::ScanBamParam(what = fields, tag = "NH"))[[1]]
     if (!length(raw$flag)) break
-    chunk <- filter_end_learning_reads(raw, min_mapq, collapsed_reads)
+    chunk <- filter_end_learning_reads(raw, min_mapq, collapsed_reads, keep_clips)
     diagnostics <- diagnostics + chunk$diagnostics
-    reads <- data.table::rbindlist(list(reads, chunk$reads))[
-      , .(count = sum(count)), by = .(
-        chromosome, position, five_position, strand, cigar, fragment_length
-      )]
+    reads <- data.table::rbindlist(list(reads, chunk$reads), use.names = TRUE)[
+      , .(count = sum(count)), by = keys]
   }
   list(reads = reads, diagnostics = diagnostics)
 }
 
 # The diagnostics count reads, so with collapsed_reads a line seq17_x250 counts
 # 250 times; bam_records counts lines.
-filter_end_learning_reads <- function(raw, min_mapq, collapsed_reads = FALSE) {
+filter_end_learning_reads <- function(raw, min_mapq, collapsed_reads = FALSE,
+                                      keep_clips = FALSE) {
   multiplicity <- read_multiplicity(raw$qname, length(raw$flag), collapsed_reads)
   keep <- bitwAnd(raw$flag, 1L + 4L + 256L + 512L + 2048L) == 0L & raw$mapq >= min_mapq
   if (!is.null(raw$tag$NH)) keep <- keep & (is.na(raw$tag$NH) | raw$tag$NH <= 1L)
-  cigar <- learning_alignment_cigar(raw$cigar[keep])
+  raw_cigar <- raw$cigar[keep]
+  strand <- as.character(raw$strand[keep])
+  if (keep_clips) {
+    clips <- terminal_soft_clips(raw_cigar)
+    cigar <- learning_alignment_cigar(clips$core)
+    minus <- strand == "-"
+    five_clip <- ifelse(minus, clips$trailing, clips$leading)
+    three_clip <- ifelse(minus, clips$leading, clips$trailing)
+    five_clip_base <- rep("", length(cigar))
+    if (!is.null(raw$seq)) {
+      sequence <- as.character(raw$seq[keep])
+      one <- which(five_clip == 1L)
+      first <- substr(sequence[one], 1L, 1L)
+      last <- substr(sequence[one], nchar(sequence[one]), nchar(sequence[one]))
+      five_clip_base[one] <- ifelse(minus[one], chartr("ACGTN", "TGCAN", last), first)
+    }
+  } else {
+    cigar <- learning_alignment_cigar(raw_cigar)
+  }
   reads <- data.table::data.table(chromosome = as.character(raw$rname[keep]),
-    position = raw$pos[keep], strand = as.character(raw$strand[keep]), cigar = cigar,
+    position = raw$pos[keep], strand = strand, cigar = cigar,
     multiplicity = multiplicity[keep])
+  if (keep_clips) {
+    reads[, `:=`(five_clip = as.integer(five_clip), three_clip = as.integer(three_clip),
+                 five_clip_base = five_clip_base)]
+  }
   unsupported <- sum(reads[is.na(cigar), multiplicity])
   reads <- reads[!is.na(cigar)]
   if (nrow(reads)) {
@@ -659,15 +747,20 @@ filter_end_learning_reads <- function(raw, min_mapq, collapsed_reads = FALSE) {
     reads[, five_position := ifelse(
       strand == "+", position, position + reference_width - 1L
     )]
-    reads <- reads[, .(count = sum(multiplicity)), by = .(
-      chromosome, position, five_position, strand, cigar, fragment_length
-    )]
+    keys <- c("chromosome", "position", "five_position", "strand", "cigar",
+              "fragment_length",
+              if (keep_clips) c("five_clip", "three_clip", "five_clip_base"))
+    reads <- reads[, .(count = sum(multiplicity)), by = keys]
   } else {
     reads <- data.table::data.table(
       chromosome = character(), position = integer(), five_position = integer(),
       strand = character(), cigar = character(), fragment_length = integer(),
       count = integer()
     )
+    if (keep_clips) {
+      reads[, `:=`(five_clip = integer(), three_clip = integer(),
+                   five_clip_base = character())]
+    }
   }
   list(reads = reads, diagnostics = c(
     bam_records = length(keep),
@@ -804,4 +897,134 @@ fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit) {
          codon_weights = codon_table,
          motif_counts = opportunities[, .(reads = sum(count), opportunities = .N),
            by = .(fragment_length, five, three)]))
+}
+
+# ---- Soft clips and the hidden non-templated 5' base ----------------------------------------------------
+#
+# Library preparations often put extra nucleotides at the read ends that are not in the footprint: a
+# non-templated base before the 5' end (reverse transcriptase in circularization protocols, mostly a T),
+# adapter or UMI remnants at the 3' end. A local aligner soft clips them when they do not match the genome.
+# When the added 5' base happens to match the genome base upstream of the footprint, it is aligned instead
+# and the read is silently one nucleotide longer at its 5' end. The helpers below report the clips, decide
+# which clipped reads to use, and remove the expected hidden reads from the end-motif counts.
+
+validate_added_base <- function(added_base) {
+  if (is.null(added_base)) return(invisible(TRUE))
+  if (!is.character(added_base) || length(added_base) != 1L || is.na(added_base) ||
+      !(added_base %in% c("auto", "A", "C", "G", "T"))) {
+    stop("added_base must be NULL, 'auto' or one of 'A', 'C', 'G', 'T'")
+  }
+  invisible(TRUE)
+}
+
+# Leading and trailing soft clip lengths (in genome orientation) and the cigar without them.
+terminal_soft_clips <- function(cigar) {
+  leading <- integer(length(cigar)); trailing <- integer(length(cigar))
+  has_lead <- grepl("^[0-9]+S", cigar)
+  leading[has_lead] <- as.integer(sub("S.*$", "", cigar[has_lead]))
+  has_trail <- grepl("[A-Z=][0-9]+S$", cigar)
+  trailing[has_trail] <- as.integer(sub("^.*[A-Z=]([0-9]+)S$", "\\1", cigar[has_trail]))
+  core <- sub("[0-9]+S$", "", sub("^[0-9]+S", "", cigar))
+  list(leading = leading, trailing = trailing, core = core)
+}
+
+# Shares of reads clipped at each end, by clip length, and the bases of 1-nt 5' clips (when read).
+soft_clip_summary <- function(reads) {
+  total <- sum(reads$count)
+  if (!total) return(list(ends = data.table::data.table(), five_one_nt_bases = data.table::data.table()))
+  class_of <- function(n) ifelse(n == 0L, "0", ifelse(n == 1L, "1", ifelse(n == 2L, "2", "3+")))
+  ends <- data.table::rbindlist(list(
+    reads[, .(reads = sum(count)), by = .(clip = class_of(five_clip))][, end := "5'"],
+    reads[, .(reads = sum(count)), by = .(clip = class_of(three_clip))][, end := "3'"]))
+  ends[, share := reads / total]
+  data.table::setcolorder(ends, c("end", "clip", "reads", "share"))
+  data.table::setorder(ends, end, clip)
+  bases <- reads[five_clip == 1L & nzchar(five_clip_base), .(reads = sum(count)), by = .(base = five_clip_base)]
+  if (nrow(bases)) bases[, share := reads / sum(reads)]
+  list(ends = ends, five_one_nt_bases = bases[order(-reads)],
+       unclipped_share = reads[five_clip == 0L & three_clip == 0L, sum(count)] / total)
+}
+
+# Which reads enter the fit. Unclipped reads always; with "trim" every clipped read (aligned part); with an
+# added base also the reads whose only 5' clip is that base (kept apart, for the hidden-base estimate).
+select_clipped_reads <- function(reads, soft_clips, added_base, clip_diagnostics) {
+  base <- NULL; reason <- "added_base = NULL"
+  if (!is.null(added_base)) {
+    bases <- clip_diagnostics$five_one_nt_bases
+    if (identical(added_base, "auto")) {
+      one_share <- clip_diagnostics$ends[end == "5'" & clip == "1", sum(share)]
+      if (!nrow(bases)) {
+        reason <- "auto: no 1-nt 5' clip bases (BAM without sequences or no clips)"
+      } else if (one_share < 0.01) {
+        reason <- sprintf("auto: 1-nt 5' clips are only %.2f%% of reads", 100 * one_share)
+      } else if (bases$share[1] < 0.5) {
+        reason <- sprintf("auto: most common 1-nt 5' clip base %s is only %.0f%% of them",
+                          bases$base[1], 100 * bases$share[1])
+      } else {
+        base <- bases$base[1]
+        reason <- sprintf("auto: %s is %.0f%% of 1-nt 5' clips (%.1f%% of reads)",
+                          base, 100 * bases$share[1], 100 * one_share)
+      }
+    } else {
+      one_nt <- clip_diagnostics$ends[end == "5'" & clip == "1", sum(reads)]
+      if (one_nt > 0 && !nrow(bases)) {
+        stop("added_base needs read sequences in the BAM (SEQ is '*')")
+      }
+      base <- added_base; reason <- "given"
+    }
+  }
+  clean <- reads$five_clip == 0L & reads$three_clip == 0L
+  added <- if (is.null(base)) rep(FALSE, nrow(reads)) else
+    reads$five_clip == 1L & reads$five_clip_base == base & reads$three_clip == 0L
+  use <- if (soft_clips == "trim") !added else clean
+  strip <- function(x) x[, .(chromosome, position, five_position, strand, cigar,
+                             fragment_length, count)]
+  list(reads = strip(reads[use]), added_reads = strip(reads[added]),
+       added_base = base, added_base_reason = reason)
+}
+
+# Remove the expected hidden added-base reads from the counted opportunities.
+# counted, trimmed: count_end_learning_reads()$data for the selected reads and for the reads whose only
+# 5' clip is the added base (their aligned 5' end is the footprint end). Returns the corrected data
+# (trimmed reads added) and diagnostics.
+hidden_added_base_correction <- function(counted, trimmed, distribution, base) {
+  keys <- c("transcript_id", "fragment_length", "site_tx")
+  data <- data.table::copy(counted)
+  data[, count := as.numeric(count)]
+  added <- trimmed[count > 0, .(count_added = as.numeric(sum(count))), by = keys]
+  data <- merge(data, added, by = keys, all.x = TRUE, sort = FALSE)
+  data[is.na(count_added), count_added := 0]
+  first <- substr(data$five, 1L, 1L)
+  # q: chance that the base upstream of a footprint is the added base, from unclipped reads that do not start
+  # with it (hidden reads always start with it, trimmed added-base reads never have it upstream)
+  ref <- data[first != base & nzchar(upstream)]
+  q <- if (sum(ref$count)) ref[upstream == base, sum(count)] / sum(ref$count) else NA_real_
+  offsets <- stats::setNames(distribution$site_offset, distribution$fragment_length)
+  per_length <- data.table::data.table(fragment_length = as.integer(names(offsets)))
+  per_length[, `:=`(
+    trimmed_added = vapply(fragment_length, function(L) data[fragment_length == L, sum(count_added)], numeric(1)),
+    starts_with_base = vapply(fragment_length, function(L) data[fragment_length == L & first == base, sum(count)], numeric(1)))]
+  per_length[, in_frame := vapply(fragment_length, function(L) {
+    prev <- as.character(L - 1L)
+    prev %in% names(offsets) && offsets[[as.character(L)]] == offsets[[prev]] + 1L
+  }, logical(1))]
+  per_length[, hidden := 0]
+  if (is.finite(q) && q < 1) {
+    per_length[in_frame == TRUE, hidden := vapply(fragment_length, function(L)
+      per_length[fragment_length == L - 1L, trimmed_added] * q / (1 - q), numeric(1))]
+  }
+  per_length[, factor := ifelse(starts_with_base > 0, pmax(0, 1 - hidden / starts_with_base), 1)]
+  data[, factor := per_length$factor[match(fragment_length, per_length$fragment_length)]]
+  data[first == base, count := count * factor]
+  removed <- per_length[, sum(pmin(hidden, starts_with_base))]
+  data[, count := count + count_added]
+  data[, c("count_added", "factor") := NULL]
+  added_total <- sum(trimmed$count)
+  list(data = data, removed = removed, diagnostics = list(
+    base = base, upstream_share = q,
+    trimmed_reads = added_total,
+    hidden_reads_removed = removed,
+    added_rate = if (is.finite(q) && q < 1) (added_total / (1 - q)) /
+      (sum(counted$count) + added_total) else NA_real_,
+    per_length = per_length))
 }
