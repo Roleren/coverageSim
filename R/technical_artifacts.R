@@ -208,13 +208,19 @@ simulate_alignment_artifacts <- function(fragment_table, technical_artifacts,
   alignment_key <- paste(primary$seqnames, primary$start, primary$cigar,
                          primary$strand, sep = ":")
   alternatives <- split(seq_len(original_count), primary$fragment_length)
-  eligible <- vapply(seq_len(original_count), function(i) {
-    any(alignment_key[alternatives[[as.character(primary$fragment_length[i])]]] !=
-          alignment_key[i])
-  }, logical(1))
   requested_multi <- stats::rbinom(
     1L, original_count, settings$multimapping_rate
   )
+  # A molecule can become a multimapper if another molecule of the same length
+  # sits at a different alignment, i.e. its length group holds at least two
+  # distinct alignment keys. Counted once per group (linear time) and only when
+  # needed; the former per-molecule scan was quadratic and dominated runtime
+  # whenever any artifact (e.g. spikes) switched this path on.
+  eligible <- if (requested_multi > 0L) {
+    keys_per_length <- vapply(alternatives, function(idx)
+      length(unique(alignment_key[idx])), integer(1))
+    unname(keys_per_length[as.character(primary$fragment_length)] > 1L)
+  } else logical(original_count)
   selected_multi <- if (requested_multi > 0L && any(eligible)) {
     resample_values(which(eligible), min(requested_multi, sum(eligible)))
   } else integer()
