@@ -30,12 +30,28 @@ Real: one replicate pair from each of 40 human studies (80 libraries, >= 2e6 uni
 audit) and 25 yeast libraries, unique mappers (all mappers for the multimapper share), plus the ultraperiodic merged
 tracks. Simulated: 1,000 genes, 2 replicates per preset.
 
-See `presets_and_limitations.md` in the same folder for the table and figures. In short: "realistic" lies inside the
-human real range for frame 0, region shares, read lengths, multimapping and replicate dispersion; "clean" sits at the
-ultraperiodic reference for frame 0 and above every real library for CDS share; "noisy" sits beyond the real range
-for frame 0, UTR share, short reads, multimapping and dispersion. Known gap for all presets: codon-level
-heterogeneity (excess CV^2 of codon counts, max/mean codon count) is below every real library, including the
-ultraperiodic one (the human_v2 calibration targets windows, not single codons).
+Results (`open_workspace/claude-megafst/coverageSim_changes/presets_and_limitations.md`, percentile among the 80
+human libraries):
+
+| Metric | human p10 / median / p90 | clean | realistic | noisy |
+| --- | --- | --- | --- | --- |
+| frame-0 share | 0.46 / 0.57 / 0.80 (ultraperiodic 0.95) | 0.92 (100) | 0.62 (61) | 0.37 (1) |
+| genes with frame 0 dominant | 0.83 / 0.99 / 1.00 | 1.00 | 1.00 | 0.64 (2) |
+| CDS share | 0.85 / 0.93 / 0.95 | 0.98 (100) | 0.94 (70) | 0.76 (1) |
+| 5'UTR / 3'UTR share | 0.050 / 0.018 (median) | 0.014 / 0.006 | 0.045 / 0.017 | 0.11 / 0.13 (92 / 96) |
+| replicate gene dispersion | -0.001 / 0.0004 / 0.019 | 0.0003 (48) | 0.0076 (72) | 0.19 (100) |
+| modal length; reads < 25 nt | 30; 0.06 | 31; 0 | 31; 0 | 30; 0.13 (78) |
+| multimapped share of mRNA reads | 0.19 / 0.27 / 0.33 | 0 | 0.26 (34) | 0.55 (100) |
+| codon count excess CV^2 | 0.80 / 2.08 / 8.7 | 0.015 (0) | 0.32 (0) | 0.94 (16) |
+| max/mean codon count (median gene) | 9.9 / 16.0 / 39 | 4.2 (0) | 6.2 (0) | 8.6 (2) |
+
+"realistic" lies inside the human range for frame 0, region shares, read lengths, multimapping and replicate
+dispersion. "clean" matches the ultraperiodic reference for frame 0 and is above every real library for CDS share.
+"noisy" is at or beyond the edge of the real range for frame 0, frame-0 genes, CDS / UTR shares, multimapping and
+dispersion. Known gap for all three presets: codon-level heterogeneity (excess CV^2, max/mean codon count) is below
+almost every real library, including the ultraperiodic track, so even "noisy" is smoother than real data at single
+codons (the human_v2 calibration targets windows; real codon variance also includes mappability gaps, isoforms and
+other effects the simulator lacks). No preset produces the < 25 nt reads of real libraries except "noisy".
 
 ## Yeast
 
