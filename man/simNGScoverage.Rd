@@ -187,7 +187,20 @@ End-bias sources may also be `"user"` or `"learned"` with a table of
 `kmer`, `weight`, and optionally `fragment_length`; use
 \code{make_synthetic_end_bias()} to create a simple explicit profile.
 Each end accepts `strength` (default 1): 0 disables it, 0.5 weakens it,
-and values above 1 strengthen it using weight^strength. Active end biases
+and values above 1 strengthen it using weight^strength.
+`five_prime_flank_bias` and `three_prime_flank_bias` (opt-in, same table
+format) weight the nuclease cut site: the k bases just outside the fragment
+(upstream of the 5' end, downstream of the 3' end, read 5' to 3' along the
+transcript), multiplied with the terminal (chemistry) weights above; ends whose
+flank runs past the transcript are neutral. \code{learn_end_bias(flank = TRUE)}
+learns them and \code{method_end_bias()} gives defaults per method and nuclease.
+`added_base = list(base = "T", rate = 0)` (opt-in, rate 0 = off) adds a
+non-templated base in front of the 5' end of a share `rate` of the reads after
+they are drawn: soft clipped (1S) where it differs from the transcript base
+upstream, aligned ("hidden": one nt longer, 5' end one nt early) where it
+matches. At an exon start it is always clipped. The ground-truth columns keep
+the footprint and gain a column `added_base` (none / clipped / hidden).
+Active end biases
 jointly weight sites and fragment geometry before the final read draw,
 preserving each transcript/region read budget and the input site support.
 Length-specific `codon_bias` and `frame_bias` fields use the same source and

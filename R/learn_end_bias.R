@@ -57,6 +57,20 @@
 #'   base when 1-nt 5' clips are at least 1 percent of the reads and that base
 #'   makes up at least half of them; otherwise no correction is made. The
 #'   estimate is in diagnostics$added_base. Needs read sequences in the BAM.
+#' @param flank FALSE (default, as before) or TRUE. With TRUE the model gets
+#'   two more terms, the cut-site (flank) nucleotides: the base just upstream of
+#'   the 5' end and the base just downstream of the 3' end, outside the read,
+#'   as in ORFik's \code{codon_dwell_end_bias(flank = TRUE)}. The flank terms
+#'   carry the nuclease preference (where RNase cuts) and the terminal terms
+#'   (five_prime_bias, three_prime_bias, the bases inside the read) the library
+#'   chemistry (ligase, reverse transcriptase, template switching). The fit then
+#'   also returns five_prime_flank_bias and three_prime_flank_bias (1-nt tables,
+#'   per length with by_length = TRUE), which fragment_geometry accepts under the
+#'   same names. Opportunities whose flank runs past the transcript are not used.
+#'   Note: the flank of a read with a hidden added 5' base (see added_base) is
+#'   the genome base two upstream of the footprint, so a hidden base dilutes the
+#'   5' flank a little; with added_base set this is corrected together with the
+#'   terminal term.
 #' @param ridge Positive penalty shrinking log preferences towards zero.
 #'   The per-length fragment totals are conditioned on, not learned as unbiased
 #'   length probabilities. Geometry probabilities only select supported lengths.
@@ -91,12 +105,14 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
                            ridge = 1, maxit = 500L,
                            dmn_min_reads = 50L, dmn_min_sites = 20L,
                            acf_max_lag = 9L, collapsed_reads = FALSE,
-                           soft_clips = c("drop", "trim"), added_base = NULL) {
+                           soft_clips = c("drop", "trim"), added_base = NULL,
+                           flank = FALSE) {
   validate_end_learning_input(bam, fasta, transcripts, cds, k, by_length,
                               min_mapq, collapsed_reads, ridge, maxit,
                               dmn_min_reads, dmn_min_sites, acf_max_lag)
   soft_clips <- match.arg(soft_clips)
   validate_added_base(added_base)
+  if (!is.logical(flank) || length(flank) != 1L || is.na(flank)) stop("flank must be TRUE or FALSE")
   geometry <- normalize_fragment_geometry(fragment_geometry)
   if (is.null(geometry$distribution)) {
     stop("Learning requires an explicit length/offset distribution")
@@ -109,6 +125,7 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
   if (any(distribution$fragment_length < k)) stop("Motifs must fit inside fragments")
   models <- transcript_models(transcripts, fasta)
   opportunities <- end_learning_opportunities(models, cds, distribution, k)
+  if (flank) opportunities <- opportunities[grepl("^[ACGT]$", upstream) & grepl("^[ACGT]$", downstream)]
   if (!nrow(opportunities)) stop("No valid CDS fragment opportunities")
   observed <- read_end_learning_bam(bam, min_mapq, collapsed_reads,
                                     keep_clips = TRUE,
@@ -133,7 +150,7 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
   observed$reads <- selected$reads[, .(count = sum(count)), by = .(
     chromosome, position, five_position, strand, cigar, fragment_length)]
   if (!sum(counted$data$count)) stop("No usable reads match the supplied CDS geometry")
-  fit <- fit_end_preferences(counted$data, k, by_length, ridge, maxit)
+  fit <- fit_end_preferences(counted$data, k, by_length, ridge, maxit, flank)
   frame_fit <- if (by_length) {
     learn_length_frame_bias(observed$reads, models, cds, distribution)
   } else {
@@ -170,11 +187,13 @@ learn_end_bias <- function(bam, fasta, transcripts, cds, fragment_geometry,
     site_reference = geometry$site_reference, k = k, by_length = by_length,
     min_mapq = min_mapq, collapsed_reads = collapsed_reads,
     soft_clips = soft_clips, added_base = if (is.null(added_base)) NA_character_ else added_base,
+    flank = flank,
     ridge = ridge, maxit = maxit,
     dmn_min_reads = dmn_min_reads, dmn_min_sites = dmn_min_sites,
     acf_max_lag = acf_max_lag,
     model = paste("conditional multinomial: transcript:length + codon +",
-                  "5prime + 3prime; robust DMN moment concentration +",
+                  "5prime + 3prime", if (flank) "+ 5prime flank + 3prime flank" else "",
+                  "; robust DMN moment concentration +",
                   "residual codon autocorrelation"),
     created = as.character(Sys.time()), package_version = as.character(utils::packageVersion("coverageSim"))
   )
@@ -277,6 +296,10 @@ end_learning_opportunities <- function(models, cds, distribution, k) {
         strand = model$strand, codon = codons,
         five = substring(sequences, 1L, k),
         upstream = substring(model$sequence, starts - 1L, starts - 1L),
+        downstream = substring(model$sequence, starts + length_value, starts + length_value),
+        # 5' end on the first base of an internal exon: the genome base upstream is intronic, so an added 5' base
+        # there is clipped whatever the transcript base upstream is (used by hidden_added_base_correction()).
+        exon_start = starts %in% model$cumulative_start[-1L],
         three = substring(sequences, length_value - k + 1L, length_value)
       )
       result[grepl("^[ACGT]+$", sequences) & grepl("^[ACGT]{3}$", codon)]
@@ -365,6 +388,11 @@ estimate_dmn_alpha_from_opportunities <- function(opportunities, fit,
          codon_weight *
          end_profile_weights(fit$five_prime_bias, five, fragment_length) *
          end_profile_weights(fit$three_prime_bias, three, fragment_length)]
+  if (!is.null(fit$five_prime_flank_bias)) {
+    data[, expected_weight := expected_weight *
+           end_profile_weights(fit$five_prime_flank_bias, upstream, fragment_length) *
+           end_profile_weights(fit$three_prime_flank_bias, downstream, fragment_length)]
+  }
   if (any(!is.finite(data$expected_weight) | data$expected_weight <= 0)) {
     stop("Fitted coverage weights must be finite and positive")
   }
@@ -808,14 +836,19 @@ end_motif_levels <- function(k) {
 # fragment length gets its own set, since a protocol may treat lengths
 # differently; without it, the lengths share one set, which is steadier when
 # reads are few.
-end_learning_design <- function(opportunities, k, by_length) {
+end_learning_design <- function(opportunities, k, by_length, flank = FALSE) {
   data <- data.table::copy(opportunities)
   data[, group := paste(transcript_id, fragment_length, sep = ":")]
   totals <- data[, .(total = sum(count)), by = group][total > 0]
   data <- merge(data, totals, by = "group")
   if (!nrow(data)) stop("No groups with usable reads")
-  data <- data[, .(count = sum(count), exposure = .N, total = total[1]),
-               by = .(group, fragment_length, codon, five, three)]
+  if (!flank) {
+    data <- data[, .(count = sum(count), exposure = .N, total = total[1]),
+                 by = .(group, fragment_length, codon, five, three)]
+  } else {
+    data <- data[, .(count = sum(count), exposure = .N, total = total[1]),
+                 by = .(group, fragment_length, codon, five, three, upstream, downstream)]
+  }
   lengths <- sort(unique(data$fragment_length))
   motifs <- end_motif_levels(k)
   labels <- if (by_length) as.vector(outer(motifs, lengths, paste, sep = ":")) else motifs
@@ -830,9 +863,20 @@ end_learning_design <- function(opportunities, k, by_length) {
   } else data$codon
   index <- cbind(match(five, labels), length(labels) + match(three, labels),
                  2L * length(labels) + match(codon, codon_labels))
+  # Cut-site terms after the codon block: one nucleotide outside each end.
+  flank_motifs <- end_motif_levels(1L)
+  flank_labels <- if (by_length) as.vector(outer(flank_motifs, lengths, paste, sep = ":")) else flank_motifs
+  if (flank) {
+    up <- if (by_length) paste(data$upstream, data$fragment_length, sep = ":") else data$upstream
+    down <- if (by_length) paste(data$downstream, data$fragment_length, sep = ":") else data$downstream
+    first_flank <- 2L * length(labels) + length(codon_labels)
+    index <- cbind(index, first_flank + match(up, flank_labels),
+                   first_flank + length(flank_labels) + match(down, flank_labels))
+  }
   list(data = data, index = index, groups = match(data$group, unique(data$group)),
        motifs = motifs, labels = labels, lengths = lengths, codons = codons,
-       codon_labels = codon_labels)
+       codon_labels = codon_labels, flank = flank, flank_motifs = flank_motifs,
+       flank_labels = if (flank) flank_labels else character(0))
 }
 
 # Fit the end preferences: how much each motif changes a fragment's chance of
@@ -850,11 +894,12 @@ end_learning_design <- function(opportunities, k, by_length) {
 # from overflowing on groups with many opportunities. And `ridge` pulls the
 # weights gently towards zero, which keeps a motif that appears only a handful of
 # times from being handed an extreme weight on almost no evidence.
-fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit) {
-  design <- end_learning_design(opportunities, k, by_length)
+fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit, flank = FALSE) {
+  design <- end_learning_design(opportunities, k, by_length, flank)
   data <- design$data
   index <- design$index
-  n_parameters <- 2L * length(design$labels) + length(design$codon_labels)
+  n_codon_end <- 2L * length(design$labels) + length(design$codon_labels)
+  n_parameters <- n_codon_end + 2L * length(design$flank_labels)
   evaluate <- function(beta, gradient = FALSE) {
     eta <- rowSums(matrix(beta[index], nrow = nrow(index))) + log(data$exposure)
     maxima <- as.numeric(tapply(eta, design$groups, max))
@@ -863,7 +908,7 @@ fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit) {
     logp <- eta - maxima[design$groups] - log(sums[design$groups])
     if (!gradient) return(-sum(data$count * logp) + ridge * sum(beta^2) / 2)
     residual <- data$total * exp(logp) - data$count
-    values <- rowsum(rep(residual, 3L), as.vector(index), reorder = TRUE)
+    values <- rowsum(rep(residual, ncol(index)), as.vector(index), reorder = TRUE)
     result <- ridge * beta
     result[as.integer(rownames(values))] <- result[as.integer(rownames(values))] + values[, 1]
     result
@@ -872,24 +917,24 @@ fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit) {
     gr = function(beta) evaluate(beta, TRUE), method = "L-BFGS-B",
     control = list(maxit = maxit, factr = 1e7))
   if (fit$convergence != 0L) stop("End-bias fit did not converge: ", fit$message)
-  make_profile <- function(offset) {
-    table <- data.table::data.table(kmer = rep(design$motifs,
+  make_profile <- function(offset, motifs = design$motifs, labels = design$labels) {
+    table <- data.table::data.table(kmer = rep(motifs,
       if (by_length) length(design$lengths) else 1L),
-      weight = exp(fit$par[offset + seq_along(design$labels)]))
-    if (by_length) table[, fragment_length := rep(design$lengths, each = length(design$motifs))]
+      weight = exp(fit$par[offset + seq_along(labels)]))
+    if (by_length) table[, fragment_length := rep(design$lengths, each = length(motifs))]
     list(source = "learned", table = table, strength = 1)
   }
   codon_table <- data.table::data.table(
     codon = rep(design$codons,
       if (by_length) length(design$lengths) else 1L),
-    weight = exp(tail(fit$par, length(design$codon_labels)))
+    weight = exp(fit$par[2L * length(design$labels) + seq_along(design$codon_labels)])
   )
   if (by_length) {
     codon_table[, fragment_length := rep(
       design$lengths, each = length(design$codons)
     )]
   }
-  list(five_prime_bias = make_profile(0L),
+  result <- list(five_prime_bias = make_profile(0L),
        three_prime_bias = make_profile(length(design$labels)),
        diagnostics = list(convergence = fit$convergence, objective = fit$value,
          transcripts = data.table::uniqueN(opportunities[count > 0, transcript_id]),
@@ -897,6 +942,12 @@ fit_end_preferences <- function(opportunities, k, by_length, ridge, maxit) {
          codon_weights = codon_table,
          motif_counts = opportunities[, .(reads = sum(count), opportunities = .N),
            by = .(fragment_length, five, three)]))
+  if (flank) {
+    result$five_prime_flank_bias <- make_profile(n_codon_end, design$flank_motifs, design$flank_labels)
+    result$three_prime_flank_bias <- make_profile(n_codon_end + length(design$flank_labels),
+                                                  design$flank_motifs, design$flank_labels)
+  }
+  result
 }
 
 # ---- Soft clips and the hidden non-templated 5' base ----------------------------------------------------
@@ -997,7 +1048,7 @@ hidden_added_base_correction <- function(counted, trimmed, distribution, base) {
   first <- substr(data$five, 1L, 1L)
   # q: chance that the base upstream of a footprint is the added base, from unclipped reads that do not start
   # with it (hidden reads always start with it, trimmed added-base reads never have it upstream)
-  ref <- data[first != base & nzchar(upstream)]
+  ref <- data[first != base & nzchar(upstream) & !exon_start]
   q <- if (sum(ref$count)) ref[upstream == base, sum(count)] / sum(ref$count) else NA_real_
   offsets <- stats::setNames(distribution$site_offset, distribution$fragment_length)
   per_length <- data.table::data.table(fragment_length = as.integer(names(offsets)))
@@ -1017,13 +1068,28 @@ hidden_added_base_correction <- function(counted, trimmed, distribution, base) {
   data[, factor := per_length$factor[match(fragment_length, per_length$fragment_length)]]
   data[first == base, count := count * factor]
   removed <- per_length[, sum(pmin(hidden, starts_with_base))]
+  # Footprints whose upstream genome base is the added base cannot give a trimmed read: when they got the base it
+  # was hidden (and moved to length L + 1). After the trimmed reads are added back, footprints with any other
+  # upstream base are complete, those with the added base upstream only keep the share 1 - p without an added
+  # base. p per length = trimmed / (trimmed + unclipped reads with another upstream base). Restoring them matters
+  # most for the 5' flank term (flank = TRUE), which otherwise learns the added base as a depleted cut site.
+  per_length[, upstream_other := vapply(fragment_length, function(L)
+    data[fragment_length == L & nzchar(upstream) & upstream != base, sum(count)], numeric(1))]
+  per_length[, added_share := ifelse(trimmed_added > 0, trimmed_added / (trimmed_added + upstream_other), 0)]
+  # (footprints starting an internal exon are not depleted: their added base is always clipped)
+  before <- data[upstream == base & !exon_start, sum(count)]
+  data[, restore := 1 / (1 - per_length$added_share[match(fragment_length, per_length$fragment_length)])]
+  data[upstream == base & !exon_start & is.finite(restore), count := count * restore]
+  restored <- data[upstream == base & !exon_start, sum(count)] - before
+  data[, restore := NULL]
   data[, count := count + count_added]
   data[, c("count_added", "factor") := NULL]
   added_total <- sum(trimmed$count)
-  list(data = data, removed = removed, diagnostics = list(
+  list(data = data, removed = removed - restored, diagnostics = list(
     base = base, upstream_share = q,
     trimmed_reads = added_total,
     hidden_reads_removed = removed,
+    upstream_reads_restored = restored,
     added_rate = if (is.finite(q) && q < 1) (added_total / (1 - q)) /
       (sum(counted$count) + added_total) else NA_real_,
     per_length = per_length))

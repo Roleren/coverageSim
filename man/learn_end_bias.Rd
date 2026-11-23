@@ -20,7 +20,8 @@ learn_end_bias(
   acf_max_lag = 9L,
   collapsed_reads = FALSE,
   soft_clips = c("drop", "trim"),
-  added_base = NULL
+  added_base = NULL,
+  flank = FALSE
 )
 }
 \arguments{
@@ -101,6 +102,21 @@ frame and already excluded). "auto" picks the most common 1-nt 5' clip
 base when 1-nt 5' clips are at least 1 percent of the reads and that base
 makes up at least half of them; otherwise no correction is made. The
 estimate is in diagnostics$added_base. Needs read sequences in the BAM.}
+
+\item{flank}{FALSE (default, as before) or TRUE. With TRUE the model gets
+two more terms, the cut-site (flank) nucleotides: the base just upstream of
+the 5' end and the base just downstream of the 3' end, outside the read,
+as in ORFik's \code{codon_dwell_end_bias(flank = TRUE)}. The flank terms
+carry the nuclease preference (where RNase cuts) and the terminal terms
+(five_prime_bias, three_prime_bias, the bases inside the read) the library
+chemistry (ligase, reverse transcriptase, template switching). The fit then
+also returns five_prime_flank_bias and three_prime_flank_bias (1-nt tables,
+per length with by_length = TRUE), which fragment_geometry accepts under the
+same names. Opportunities whose flank runs past the transcript are not used.
+Note: the flank of a read with a hidden added 5' base (see added_base) is
+the genome base two upstream of the footprint, so a hidden base dilutes the
+5' flank a little; with added_base set this is corrected together with the
+terminal term.}
 }
 \value{
 A list containing five_prime_bias, three_prime_bias, codon_bias and

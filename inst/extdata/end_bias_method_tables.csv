@@ -1,0 +1,81 @@
+table,group,end,position,kmer,weight,log_weight,studies,libraries,organisms
+chemistry,circularization,five,terminal,A,2.0212,0.7037,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,five,terminal,C,0.8098,-0.211,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,five,terminal,G,0.4761,-0.7421,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,five,terminal,T,1.2833,0.2494,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,three,terminal,A,0.7404,-0.3006,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,three,terminal,C,0.9307,-0.0719,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,three,terminal,G,1.3857,0.3262,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,circularization,three,terminal,T,1.0473,0.0463,9,168,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,five,terminal,A,1.0996,0.0949,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,five,terminal,C,0.8115,-0.2089,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,five,terminal,G,0.9456,-0.0559,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,five,terminal,T,1.1852,0.1699,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,three,terminal,A,0.8458,-0.1674,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,three,terminal,C,0.889,-0.1177,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,three,terminal,G,1.2724,0.2409,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,dual_ligation,three,terminal,T,1.0452,0.0442,5,25,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+chemistry,ribolace,five,terminal,A,1.9742,0.6802,2,3,homo_sapiens;mus_musculus
+chemistry,ribolace,five,terminal,C,0.7855,-0.2414,2,3,homo_sapiens;mus_musculus
+chemistry,ribolace,five,terminal,G,0.5523,-0.5936,2,3,homo_sapiens;mus_musculus
+chemistry,ribolace,five,terminal,T,1.1675,0.1549,2,3,homo_sapiens;mus_musculus
+chemistry,ribolace,three,terminal,A,0.9307,-0.0718,2,4,homo_sapiens;mus_musculus
+chemistry,ribolace,three,terminal,C,0.876,-0.1324,2,4,homo_sapiens;mus_musculus
+chemistry,ribolace,three,terminal,G,1.1481,0.1381,2,4,homo_sapiens;mus_musculus
+chemistry,ribolace,three,terminal,T,1.0684,0.0662,2,4,homo_sapiens;mus_musculus
+chemistry,template_switching,five,terminal,A,0.4715,-0.7519,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,five,terminal,C,1.2873,0.2526,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,five,terminal,G,2.0631,0.7242,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,five,terminal,T,0.7986,-0.2249,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,three,terminal,A,0.0637,-2.7531,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,three,terminal,C,2.209,0.7925,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,three,terminal,G,2.7899,1.026,2,28,homo_sapiens;mus_musculus
+chemistry,template_switching,three,terminal,T,2.546,0.9345,2,28,homo_sapiens;mus_musculus
+nuclease,MNase,five,flank,A,1.2174,0.1967,1,1,homo_sapiens
+nuclease,MNase,five,flank,C,0.7549,-0.2812,1,1,homo_sapiens
+nuclease,MNase,five,flank,G,1.2528,0.2254,1,1,homo_sapiens
+nuclease,MNase,five,flank,T,0.8686,-0.1409,1,1,homo_sapiens
+nuclease,MNase,three,flank,A,3.3583,1.2114,1,1,homo_sapiens
+nuclease,MNase,three,flank,C,0.4149,-0.8797,1,1,homo_sapiens
+nuclease,MNase,three,flank,G,0.2795,-1.2748,1,1,homo_sapiens
+nuclease,MNase,three,flank,T,2.5679,0.9431,1,1,homo_sapiens
+nuclease,RNase A,five,flank,A,0.306,-1.1842,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,five,flank,C,3.3892,1.2206,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,five,flank,G,0.3175,-1.1473,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,five,flank,T,3.0369,1.1108,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,three,flank,A,1.851,0.6157,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,three,flank,C,1.1343,0.126,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,three,flank,G,1.0409,0.0401,1,1,saccharomyces_cerevisiae
+nuclease,RNase A,three,flank,T,0.4576,-0.7819,1,1,saccharomyces_cerevisiae
+nuclease,RNase I,five,flank,A,0.9985,-0.0015,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,five,flank,C,1.1251,0.1179,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,five,flank,G,0.861,-0.1497,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,five,flank,T,1.0339,0.0334,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,three,flank,A,1.1071,0.1018,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,three,flank,C,1.1413,0.1321,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,three,flank,G,0.8219,-0.1961,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase I,three,flank,T,0.9629,-0.0378,15,218,homo_sapiens;mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,five,flank,A,1.2147,0.1945,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,five,flank,C,0.8258,-0.1914,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,five,flank,G,1.0576,0.056,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,five,flank,T,0.9425,-0.0592,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,three,flank,A,2.8913,1.0617,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,three,flank,C,0.5172,-0.6594,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,three,flank,G,0.282,-1.2658,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase S7,three,flank,T,2.3713,0.8634,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,five,flank,A,0.3431,-1.0698,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,five,flank,C,0.6536,-0.4253,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,five,flank,G,9.3958,2.2403,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,five,flank,T,0.4746,-0.7452,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,three,flank,A,1.0156,0.0154,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,three,flank,C,0.9258,-0.0771,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,three,flank,G,1.1217,0.1149,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1,three,flank,T,0.9482,-0.0532,1,2,mus_musculus;saccharomyces_cerevisiae
+nuclease,RNase T1 + S7,five,flank,A,0.761,-0.2731,1,1,mus_musculus
+nuclease,RNase T1 + S7,five,flank,C,0.6105,-0.4936,1,1,mus_musculus
+nuclease,RNase T1 + S7,five,flank,G,3.7461,1.3207,1,1,mus_musculus
+nuclease,RNase T1 + S7,five,flank,T,0.5746,-0.554,1,1,mus_musculus
+nuclease,RNase T1 + S7,three,flank,A,1.2091,0.1898,1,1,mus_musculus
+nuclease,RNase T1 + S7,three,flank,C,0.7163,-0.3336,1,1,mus_musculus
+nuclease,RNase T1 + S7,three,flank,G,0.9946,-0.0055,1,1,mus_musculus
+nuclease,RNase T1 + S7,three,flank,T,1.161,0.1492,1,1,mus_musculus

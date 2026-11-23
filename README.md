@@ -161,6 +161,42 @@ The fit also returns a non-negative codon autocorrelation kernel and auditable
 zero, spike, peak and gap summaries. Pass the kernel as the RFP value in
 `auto_correlation`; use the QC tables to compare real and simulated libraries.
 
+### Cut site, library chemistry and the added 5' base
+
+Read ends carry two separate preferences: the nuclease cut site (the nucleotide
+just *outside* each read end) and the library chemistry (ligase, reverse
+transcriptase or template-switching oligo; the first and last nucleotide
+*inside* the read). `learn_end_bias(flank = TRUE)` fits both, as ORFik's
+`codon_dwell_end_bias(flank = TRUE)` does, and returns `five_prime_flank_bias`
+and `three_prime_flank_bias` next to the terminal tables. The simulator takes the
+flank tables under the same names in `fragment_geometry` and multiplies them with
+the terminal weights when it draws fragment ends.
+
+Library preparation can add a non-templated base in front of the footprint 5'
+end (circularization: mostly T). `fragment_geometry$added_base =
+list(base = "T", rate = 0.1)` simulates it (off by default): the base is soft
+clipped where it differs from the base upstream of the footprint and aligned,
+one nt early, where it matches ("hidden"). `learn_end_bias(added_base = "auto")`
+removes both from the end fit, and `soft_clips = "trim"` uses clipped reads at
+their aligned ends.
+
+`method_end_bias(method, nuclease, added_base = TRUE)` gives default tables per
+library method (circularization, dual ligation, template switching, RiboLace) and
+nuclease (RNase I, T1, A, S7, T1 + S7, MNase):
+
+```r
+geometry <- utils::modifyList(list(source = "default"),
+  method_end_bias("circularization", nuclease = "RNase I", added_base = TRUE))
+simNGScoverage(..., fragment_geometry = geometry)
+```
+
+The tables (`inst/extdata/end_bias_method_tables.csv`,
+`inst/extdata/end_bias_added_base.csv`) are medians over public studies (each
+study once) of per-library ORFik fits on libraries with undamaged read ends.
+They contain aggregated weights and study/library counts only, derived from an
+internal protocol annotation of public studies (method and nuclease per study). The non-RNase-I
+nuclease tables rest on one study each.
+
 Region allocation can be learned independently from the same or another BAM:
 
 ```r
