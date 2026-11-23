@@ -5,7 +5,7 @@
 \title{Named codon-bias settings}
 \usage{
 codon_bias_preset(
-  name = c("original", "t57", "realistic", "human", "human_v2")
+  name = c("original", "t57", "realistic", "human", "human_v2", "clean", "noisy")
 )
 }
 \arguments{
@@ -24,7 +24,11 @@ variances 0.04 / 0.05 / 0.155, 72\% shared between libraries, per-gene amplitude
 runs as in "human"); every library is its own study pool (\code{study_unit = "library"}). Calibrated on two merged
 half-pools (codon-table flags 7.6\% vs the real density-fail rate 8.7\%, "human" 20-27\%): see
 \code{\link{residual_field_options}} and docs/EXPLAINABILITY_PORTS.md (S14) for the targets met. Add
-\code{field$gc_bias = TRUE} for the footprint-GC library bias (M22).}
+\code{field$gc_bias = TRUE} for the footprint-GC library bias (M22).
+"clean" (difficulty preset, easier than real data): per-genome codon dwell with fixed sharpening, no pauses, no
+residual field. "noisy" (harder than real data): "human_v2" with pause_sd 1.0, a 30\% shared zero mask, the
+residual field doubled (variances 0.08 / 0.10 / 0.31, 50\% shared, gene amplitude sd 0.8), a wider smear and the
+footprint-GC bias. Both are the codon layer of \code{\link{simulation_preset}}; validation in docs/PRESETS.md.}
 }
 \value{
 a list for \code{options(coverageSim.codon_bias = ...)}

@@ -28,6 +28,11 @@
 #'  "FS" feature (a feature's own \code{efficiency} overrides it).
 #' @param p_readthrough default fraction of CDS ribosomes that read through the
 #'  CDS stop into a "CTE" feature.
+#' @param scan_coupling fraction of the ribosomes that initiate at a start codon which are removed from the scanning
+#'  flux (default 1: leaky scanning, so a translated uORF takes ribosomes from the CDS and suppresses it, as in the
+#'  canonical scanning model). 0 decouples the features: each start codon sees the full scanning flux, so a uORF's
+#'  load follows only its own initiation probability and length (an independent translation efficiency) and the CDS
+#'  is not suppressed. Values in between give partial suppression.
 #' @param conditions named list: per condition (as in the count table's
 #'  \code{condition} column) a list of parameters that replace the defaults, or
 #'  \code{p_init_scale}, a factor on all initiation probabilities. Default none:
@@ -42,14 +47,14 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                            p_init_other = 0.02, reinit_max = 0.6,
                            reinit_scale_codons = 30, reinit_distance = 50,
                            reinit_after_cds = 0.05, p_frameshift = 0.05,
-                           p_readthrough = 0.02,
+                           p_readthrough = 0.02, scan_coupling = 1,
                            conditions = list()) {
   params <- list(p_init = p_init, p_init_other = p_init_other, reinit_max = reinit_max,
                  reinit_scale_codons = reinit_scale_codons,
                  reinit_distance = reinit_distance, reinit_after_cds = reinit_after_cds,
                  p_frameshift = p_frameshift, p_readthrough = p_readthrough,
-                 p_init_scale = 1, conditions = conditions)
-  probs <- c(p_init, p_init_other, reinit_max, reinit_after_cds, p_frameshift, p_readthrough)
+                 scan_coupling = scan_coupling, p_init_scale = 1, conditions = conditions)
+  probs <- c(p_init, p_init_other, reinit_max, reinit_after_cds, p_frameshift, p_readthrough, scan_coupling)
   if (any(!is.finite(probs) | probs < 0 | probs > 1))
     stop("Probabilities in rdg_parameters must be within [0, 1]")
   if (reinit_scale_codons <= 0 || reinit_distance < 0)
@@ -114,11 +119,12 @@ rdg_gene_loads <- function(starts, ends, classes, start_codons, L, C, params,
     }
     ini <- p[i] * scanning
     initiations[i] <- ini
-    scanning <- scanning - ini
+    coupling <- if (is.null(params$scan_coupling)) 1 else params$scan_coupling
+    scanning <- scanning - coupling * ini
     # Terminating ribosomes that resume scanning rejoin after re-acquiring a
     # ternary complex downstream of the stop.
     pending_pos <- c(pending_pos, e[i] + params$reinit_distance)
-    pending_amount <- c(pending_amount, ini * reinit[i])
+    pending_amount <- c(pending_amount, coupling * ini * reinit[i])
   }
   load <- initiations * len
   list(initiations = initiations[-1], load = load[-1],

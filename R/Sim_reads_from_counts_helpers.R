@@ -1229,10 +1229,23 @@ codon_bias_options <- function(sharpen = "per_gene", sharpen_power = 1.25, per_g
 #'  half-pools (codon-table flags 7.6\% vs the real density-fail rate 8.7\%, "human" 20-27\%): see
 #'  \code{\link{residual_field_options}} and docs/EXPLAINABILITY_PORTS.md (S14) for the targets met. Add
 #'  \code{field$gc_bias = TRUE} for the footprint-GC library bias (M22).
+#'  "clean" (difficulty preset, easier than real data): per-genome codon dwell with fixed sharpening, no pauses, no
+#'  residual field. "noisy" (harder than real data): "human_v2" with pause_sd 1.0, a 30\% shared zero mask, the
+#'  residual field doubled (variances 0.08 / 0.10 / 0.31, 50\% shared, gene amplitude sd 0.8), a wider smear and the
+#'  footprint-GC bias. Both are the codon layer of \code{\link{simulation_preset}}; validation in docs/PRESETS.md.
 #' @return a list for \code{options(coverageSim.codon_bias = ...)}
 #' @export
-codon_bias_preset <- function(name = c("original", "t57", "realistic", "human", "human_v2")) {
-  switch(match.arg(name),
+codon_bias_preset <- function(name = c("original", "t57", "realistic", "human", "human_v2", "clean", "noisy")) {
+  name <- match.arg(name)
+  if (name == "clean")
+    return(list(per_genome_draws = TRUE, sharpen = "fixed", sharpen_power = 1, pause_sd = 0, pause_prob = 0))
+  if (name == "noisy")
+    return(utils::modifyList(codon_bias_preset("human_v2"), list(
+      pause_sd = 1.0, zero_prob = 0.3,
+      field = residual_field_options(field_var = 2 * c(0.04, 0.05, 0.155), field_scales = c(3, 12, 400),
+                                     shared = 0.5, gene_sd = 0.8, smear = c(1, 0.12, 0.06, 0.04, 0.02),
+                                     gc_bias = TRUE, study_unit = "library"))))
+  switch(name,
          original = list(),
          t57 = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.2, pause_prob = 0.45),
          realistic = list(sharpen = "fixed", sharpen_power = 1, per_genome_draws = TRUE, pause_sd = 1.0, pause_prob = 0.7),

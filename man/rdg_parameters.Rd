@@ -13,6 +13,7 @@ rdg_parameters(
   reinit_after_cds = 0.05,
   p_frameshift = 0.05,
   p_readthrough = 0.02,
+  scan_coupling = 1,
   conditions = list()
 )
 }
@@ -37,6 +38,12 @@ can initiate again (ternary complex re-acquisition).}
 
 \item{p_readthrough}{default fraction of CDS ribosomes that read through the
 CDS stop into a "CTE" feature.}
+
+\item{scan_coupling}{fraction of the ribosomes that initiate at a start codon which are removed from the scanning
+flux (default 1: leaky scanning, so a translated uORF takes ribosomes from the CDS and suppresses it, as in the
+canonical scanning model). 0 decouples the features: each start codon sees the full scanning flux, so a uORF's
+load follows only its own initiation probability and length (an independent translation efficiency) and the CDS
+is not suppressed. Values in between give partial suppression.}
 
 \item{conditions}{named list: per condition (as in the count table's
 \code{condition} column) a list of parameters that replace the defaults, or

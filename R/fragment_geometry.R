@@ -147,14 +147,45 @@ normalize_end_bias <- function(bias, bias_name) {
       !is.finite(strength) || strength < 0) {
     stop(bias_name, " strength must be one finite non-negative number")
   }
+  flank <- if (is.null(bias$flank)) 0L else bias$flank
+  if (!is.numeric(flank) || length(flank) != 1L || !is.finite(flank) || flank < 0 ||
+      flank != as.integer(flank)) {
+    stop(bias_name, " flank must be one non-negative integer")
+  }
+  flank <- as.integer(flank)
   if (bias$source %in% c("none", "default")) {
-    return(list(source = bias$source, table = NULL, strength = strength))
+    return(list(source = bias$source, table = NULL, strength = strength, flank = flank))
   }
   if (is.null(bias$table)) {
     stop("fragment_geometry$", bias_name, " requires a kmer/weight table")
   }
-  list(source = bias$source, table = validate_end_bias_table(bias$table, bias_name),
-       strength = strength)
+  table <- validate_end_bias_table(bias$table, bias_name)
+  if (flank > 0L && flank >= unique(nchar(table$kmer))[1L]) {
+    stop(bias_name, " flank must be smaller than the k-mer length (at least one base inside the fragment)")
+  }
+  list(source = bias$source, table = table, strength = strength, flank = flank)
+}
+
+# Nuclease cut-site context (opt-in, flank > 0): the k-mer of an end spans the cut, i.e. `flank` bases outside the
+# fragment (upstream of the 5' end, downstream of the 3' end) and k - flank bases inside. RNase stops trimming
+# depending on the bases on both sides of the cut, which the fragment's own bases alone cannot express. Positions
+# beyond the transcript are "N", so such k-mers match no table row and stay neutral.
+end_bias_context_kmer <- function(transcript_sequence, tx_start, tx_end, bias, three_prime = FALSE) {
+  if (is.null(bias$table)) return(NULL)
+  k <- unique(nchar(bias$table$kmer))
+  flank <- bias$flank
+  pad <- strrep("N", flank)
+  padded <- paste0(pad, transcript_sequence, pad)
+  if (three_prime) {
+    from <- tx_end - (k - flank) + 1L
+  } else from <- tx_start - flank
+  substr(padded, from + flank, from + flank + k - 1L)
+}
+
+has_end_bias_flank <- function(geometry) {
+  any(vapply(geometry[c("five_prime_bias", "three_prime_bias")], function(b) {
+    !is.null(b$table) && isTRUE(b$flank > 0L)
+  }, logical(1)))
 }
 
 # How much a fragment's own end sequences change its chance of being sequenced.
@@ -179,7 +210,8 @@ normalize_end_bias <- function(bias, bias_name) {
 # looked up only once, since millions of candidate fragments share a few hundred
 # of them.
 end_bias_weight <- function(sequence, fragment_length,
-                            five_bias, three_bias) {
+                            five_bias, three_bias,
+                            five_kmer = NULL, three_kmer = NULL) {
   lookup <- function(kmer, bias) {
     if (is.null(bias$table) || identical(bias$strength, 0)) {
       return(rep(1, length(sequence)))
@@ -215,8 +247,9 @@ end_bias_weight <- function(sequence, fragment_length,
     if (from_end) substr(sequence, nchar(sequence) - k + 1L, nchar(sequence))
     else substr(sequence, 1L, k)
   }
-  lookup(extract_kmer(five_bias), five_bias) *
-    lookup(extract_kmer(three_bias, TRUE), three_bias)
+  if (is.null(five_kmer)) five_kmer <- extract_kmer(five_bias)
+  if (is.null(three_kmer)) three_kmer <- extract_kmer(three_bias, TRUE)
+  lookup(five_kmer, five_bias) * lookup(three_kmer, three_bias)
 }
 
 end_bias_kmer <- function(sequence, bias, from_end = FALSE) {
@@ -775,10 +808,25 @@ fragment_candidates <- function(signal_table, transcript_models, candidates,
   pairs[, frame := if ("region_position" %in% names(signal_table)) {
     as.integer((signal_table$region_position[signal_row] - 1L) %% 3L)
   } else 0L]
-  pairs[, end_bias_weight := end_bias_weight(
-    sequence, fragment_length,
-    geometry$five_prime_bias, geometry$three_prime_bias
-  )]
+  if (has_end_bias_flank(geometry)) {
+    # Cut-site context: k-mers taken from the transcript around each end (flank > 0).
+    pairs[, five_prime_kmer := if (isTRUE(geometry$five_prime_bias$flank > 0L))
+      end_bias_context_kmer(transcript_sequence, tx_start, tx_end, geometry$five_prime_bias)
+      else end_bias_kmer(sequence, geometry$five_prime_bias)]
+    pairs[, three_prime_kmer := if (isTRUE(geometry$three_prime_bias$flank > 0L))
+      end_bias_context_kmer(transcript_sequence, tx_start, tx_end, geometry$three_prime_bias, TRUE)
+      else end_bias_kmer(sequence, geometry$three_prime_bias, TRUE)]
+    pairs[, end_bias_weight := end_bias_weight(
+      sequence, fragment_length, geometry$five_prime_bias, geometry$three_prime_bias,
+      if (is.null(geometry$five_prime_bias$table)) NULL else five_prime_kmer,
+      if (is.null(geometry$three_prime_bias$table)) NULL else three_prime_kmer
+    )]
+  } else {
+    pairs[, end_bias_weight := end_bias_weight(
+      sequence, fragment_length,
+      geometry$five_prime_bias, geometry$three_prime_bias
+    )]
+  }
   pairs[, codon_bias_weight := fragment_feature_weights(
     codon, fragment_length, geometry$codon_bias, "codon"
   )]
@@ -1019,8 +1067,10 @@ make_simulated_rpf_fragments <- function(signal_table, transcript_models,
     reference_sequence = reference_sequence,
     codon = drawn$codon,
     frame = drawn$frame,
-    five_prime_kmer = end_bias_kmer(drawn$sequence, geometry$five_prime_bias),
-    three_prime_kmer = end_bias_kmer(drawn$sequence, geometry$three_prime_bias, TRUE),
+    five_prime_kmer = if (!is.null(drawn$five_prime_kmer)) drawn$five_prime_kmer
+                      else end_bias_kmer(drawn$sequence, geometry$five_prime_bias),
+    three_prime_kmer = if (!is.null(drawn$three_prime_kmer)) drawn$three_prime_kmer
+                       else end_bias_kmer(drawn$sequence, geometry$three_prime_bias, TRUE),
     end_bias_weight = drawn$end_bias_weight,
     codon_bias_weight = drawn$codon_bias_weight,
     frame_bias_weight = drawn$frame_bias_weight,

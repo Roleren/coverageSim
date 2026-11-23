@@ -187,7 +187,11 @@ End-bias sources may also be `"user"` or `"learned"` with a table of
 `kmer`, `weight`, and optionally `fragment_length`; use
 \code{make_synthetic_end_bias()} to create a simple explicit profile.
 Each end accepts `strength` (default 1): 0 disables it, 0.5 weakens it,
-and values above 1 strengthen it using weight^strength. Active end biases
+and values above 1 strengthen it using weight^strength. Each end also accepts
+`flank` (default 0, opt-in nuclease cut-site context): the k-mer then spans the
+cut, `flank` bases outside the fragment (upstream of the 5' end, downstream of
+the 3' end) plus k - flank bases inside; bases beyond the transcript are neutral.
+Active end biases
 jointly weight sites and fragment geometry before the final read draw,
 preserving each transcript/region read budget and the input site support.
 Length-specific `codon_bias` and `frame_bias` fields use the same source and
