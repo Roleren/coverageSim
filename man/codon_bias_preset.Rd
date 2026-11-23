@@ -4,7 +4,9 @@
 \alias{codon_bias_preset}
 \title{Named codon-bias settings}
 \usage{
-codon_bias_preset(name = c("original", "t57", "realistic", "human"))
+codon_bias_preset(
+  name = c("original", "t57", "realistic", "human", "human_v2")
+)
 }
 \arguments{
 \item{name}{"original", "t57" (fixed sharpening, per-genome draws, replicate-shared pauses), "realistic"
@@ -14,7 +16,15 @@ sharpening and smoothing, which give the smooth positively autocorrelated backgr
 pause_sd 0.9 / pause_prob 0.8, CDS tau2 0.06 (S9), the Pro-Pro stall kernel and the Pro-run depletion; simulated
 per-codon ACF at lags 1-5 0.64 / 0.42 / 0.35 / 0.31 / 0.26 vs real 0.58 / 0.42 / 0.37 / 0.33 / 0.28). The
 "realistic" preset has almost no autocorrelation beyond lag 1 (0.39 / 0.03 / 0 ...): its fixed sharpening and strong
-pauses drown the smooth component. "t57" and "realistic" are unchanged.}
+pauses drown the smooth component. "t57" and "realistic" are unchanged.
+"human_v2" (port S14, Fable review 2026-11-22): replaces the per-gene sharpening, the smoothing and tau2 of "human"
+by a per-gene contrast exponent N(1.03, 0.15), a multi-scale log-field (AR(1) components of 3 / 12 / 400 codons,
+variances 0.04 / 0.05 / 0.155, 72\% shared between libraries, per-gene amplitude sd 0.62) and a P-site smear kernel
+(1, 0.06, 0.03, 0.02, 0.01 at offsets 0..4) after the pauses (pause_sd 0.75 / pause_prob 0.8, Pro-Pro stalls and Pro
+runs as in "human"); every library is its own study pool (\code{study_unit = "library"}). Calibrated on two merged
+half-pools (codon-table flags 7.6\% vs the real density-fail rate 8.7\%, "human" 20-27\%): see
+\code{\link{residual_field_options}} and docs/EXPLAINABILITY_PORTS.md (S14) for the targets met. Add
+\code{field$gc_bias = TRUE} for the footprint-GC library bias (M22).}
 }
 \value{
 a list for \code{options(coverageSim.codon_bias = ...)}

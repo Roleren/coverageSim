@@ -21,6 +21,10 @@ codon_bias_options(
   pp_stall_peak = 0.9,
   pro_run = FALSE,
   pro_run_factor = c(`3` = 0.766, `4` = 0.45, `5` = 0.45),
+  contrast_mean = 1.03,
+  contrast_sd = 0.15,
+  smooth = TRUE,
+  field = list(),
   seed = 1L
 )
 }
@@ -82,6 +86,18 @@ real peak gains less than its flanks lose (residual +0.10 vs -0.14 / -0.09), so 
 \item{pro_run_factor}{named numeric (names = Pro counts). Default: nP 3 0.766, 4-5 0.45 = exp(-0.266) / exp(-0.799),
 the real minus additive-dwell-model log density by Pro count relative to nP = 0 (M16, m16_repeats/raw_pro.R:
 observed 0 -0.28, 1 -0.32, 2 -0.44, 3 -0.64, 4-5 -1.18; model -0.09 .. -0.20). Add "2" = 0.90 for the milder nP = 2.}
+
+\item{contrast_mean, contrast_sd}{numeric (S14), used when \code{sharpen = "contrast"}: every gene raises its codon
+weights to its own exponent N(contrast_mean, contrast_sd^2) (floored at 0.05; \code{sharpen_power} is not used),
+drawn per genome with \code{seed} + 5000, instead of the original per-gene sharpening (which is set by the codon
+spread of the gene and too strong: S13-check, 13 of 20-27\% false table-E flags). Real data (Fable review
+hypothesis 7, peek7): per-gene slope of log O on log E median 1.03, 5-95\% 0.82-1.31.}
+
+\item{smooth}{logical (S14; TRUE = original), apply the \code{seq_acf} smoothing of the codon weights. FALSE leaves
+the autocorrelation to the residual field and the smear kernel of \code{field}.}
+
+\item{field}{list of \code{\link{residual_field_options}} arguments (S14): multi-scale study-shared log-field,
+P-site smear kernel applied after the pauses, footprint-GC bias. Default \code{list()} = all off.}
 
 \item{seed}{integer seed for the per-genome draws.}
 }
