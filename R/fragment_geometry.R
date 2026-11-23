@@ -662,6 +662,19 @@ needs_candidate_sequence <- function(geometry) {
     active(geometry$codon_bias)
 }
 
+# Which joint fragment draw to use: "joint" (default, one multinomial over all
+# candidates of a group) or "two_stage" (same distribution, positions first, then
+# length and offset; faster, but different reads for the same seed). The
+# two-stage draw is used only for joint draws without sequence-dependent biases
+# and without boundary_action = "error"; otherwise the joint draw runs.
+fragment_draw_option <- function() {
+  draw <- getOption("coverageSim.fragment_draw", "joint")
+  if (!is.character(draw) || length(draw) != 1L || !draw %in% c("joint", "two_stage")) {
+    stop('options(coverageSim.fragment_draw) must be "joint" or "two_stage"')
+  }
+  draw
+}
+
 has_active_fragment_bias <- function(geometry) {
   bias_names <- c("five_prime_bias", "three_prime_bias", "codon_bias", "frame_bias")
   any(vapply(geometry[bias_names], function(bias) {
@@ -955,6 +968,138 @@ move_unplaceable_reads <- function(signal_table, placeable) {
   list(signal_table = signal_table, dropped = data.table::rbindlist(dropped))
 }
 
+# Opt-in faster joint draw: options(coverageSim.fragment_draw = "two_stage")
+# (default "joint").
+#
+# The joint draw spreads a group's read budget over every (position, length,
+# offset) candidate with weight w = geometry probability x bias weight x
+# position score. A multinomial over all candidates has the same distribution
+# as two nested ones: first the budget over positions, with each position's
+# summed weight W_i, then each position's reads over its own candidates. Only
+# the positions that receive reads need their candidates built. Without
+# sequence-dependent biases (end-bias / codon-bias tables) a position's summed
+# weight depends only on its frame, unless it sits so close to a transcript
+# end that some candidates do not fit; only those edge positions are expanded
+# to compute W_i. Same distribution as allocate_fragment_candidates(), but a
+# different use of the random numbers, so outputs are not identical to the
+# default path.
+allocate_fragments_two_stage <- function(signal_table, transcript_models,
+                                         candidates, geometry) {
+  n_signal <- nrow(signal_table)
+  labels <- fragment_sampling_groups(signal_table)
+  budgets <- data.table::data.table(draw_group = labels, sampling_group = labels,
+                                    transcript_id = signal_table$transcript_id)
+  if ("read_count" %in% names(signal_table)) {
+    budgets[, read_count := signal_table$read_count]
+    budgets <- budgets[, .(sampling_group = sampling_group[1],
+                           transcript_id = transcript_id[1],
+                           total = if (data.table::uniqueN(read_count) == 1L) {
+                             read_count[1]
+                           } else NA_real_), by = draw_group]
+  } else {
+    budgets[, score := signal_table$score]
+    budgets <- budgets[, .(sampling_group = sampling_group[1],
+                           transcript_id = transcript_id[1],
+                           total = round(sum(score))), by = draw_group]
+  }
+  if (anyNA(budgets$total) || any(budgets$total < 0) ||
+      any(budgets$total != floor(budgets$total))) {
+    stop("Invalid fragment sampling budget")
+  }
+  group_id <- match(labels, budgets$draw_group)
+
+  # Transcript coordinate of every position and its transcript length.
+  transcript_id <- signal_table$transcript_id
+  used_ids <- unique(transcript_id)
+  used_models <- lapply(used_ids, function(id) transcript_models[[id]])
+  model_index <- match(transcript_id, used_ids)
+  if (any(vapply(used_models, is.null, logical(1)))) {
+    stop("No transcript model for: ", used_ids[vapply(used_models, is.null, logical(1))][1])
+  }
+  site_tx <- rep(NA_integer_, n_signal)
+  rows_per_model <- split(seq_len(n_signal), model_index)
+  for (k in as.integer(names(rows_per_model))) {
+    rows <- rows_per_model[[as.character(k)]]
+    site_tx[rows] <- genomic_sites_to_transcript(used_models[[k]],
+                                                 signal_table$signal_position[rows])
+  }
+  if (anyNA(site_tx)) {
+    stop("Signal position is not exonic in transcript ", transcript_id[which(is.na(site_tx))[1]])
+  }
+  tx_length <- vapply(used_models, function(m) as.numeric(m$length), numeric(1))[model_index]
+
+  # Summed candidate weight per position (before the position score).
+  prior <- candidates$probability / sum(candidates$probability)
+  frame <- if ("region_position" %in% names(signal_table)) {
+    as.integer((signal_table$region_position - 1L) %% 3L)
+  } else integer(n_signal)
+  per_frame <- vapply(0:2, function(f) {
+    sum(prior * fragment_feature_weights(rep(f, nrow(candidates)),
+                                         candidates$fragment_length,
+                                         geometry$frame_bias, "frame"))
+  }, numeric(1))
+  interior <- site_tx >= 1L + max(candidates$site_offset) &
+    site_tx <= tx_length - max(candidates$fragment_length - 1L - candidates$site_offset)
+  site_weight <- per_frame[frame + 1L]
+  edge <- which(!interior)
+  if (length(edge)) {
+    edge_candidates <- fragment_candidates(signal_table[edge], transcript_models,
+                                           candidates, geometry)
+    edge_sum <- edge_candidates[, .(w = sum(geometry_probability * bias_weight)),
+                                by = signal_row]
+    site_weight[edge] <- 0
+    site_weight[edge[edge_sum$signal_row]] <- edge_sum$w
+  }
+  fits_any <- site_weight > 0
+  weight <- site_weight * signal_table$score
+  if (any(!is.finite(weight))) {
+    stop("End-bias strength produces non-finite weights; reduce strength")
+  }
+
+  # Groups whose positions have no room for any fragment lose their reads.
+  has_room <- unique(group_id[fits_any])
+  dropped <- budgets[total > 0 & !seq_len(.N) %in% has_room,
+                     .(reads = as.numeric(sum(total))),
+                     by = .(sampling_group = as.character(sampling_group),
+                            transcript_id = as.character(transcript_id))]
+
+  # Stage 1: each group's budget over its positions, groups in order of first
+  # appearance among positions that have room.
+  position_reads <- integer(n_signal)
+  group_total_weight <- numeric(nrow(budgets))
+  room_rows <- which(fits_any)
+  room_group <- group_id[room_rows]
+  rows_by_group <- split(room_rows, match(room_group, unique(room_group)))
+  for (rows in rows_by_group) {
+    g <- group_id[rows[1L]]
+    w <- weight[rows]
+    if (sum(w) <= 0) stop("End-bias weights exclude every feasible fragment")
+    group_total_weight[g] <- sum(w)
+    position_reads[rows] <- as.integer(stats::rmultinom(1L, budgets$total[g], w / sum(w)))
+  }
+
+  # Stage 2: each position's reads over its own candidates.
+  hit <- which(position_reads > 0L)
+  allocated <- fragment_candidates(signal_table[hit], transcript_models,
+                                   candidates, geometry)
+  allocated[, signal_row := hit[signal_row]]
+  allocated[, sampling_group := labels[signal_row]]
+  w <- allocated$geometry_probability * allocated$bias_weight
+  score <- integer(length(w))
+  rows_by_position <- split(seq_along(w), allocated$signal_row)
+  for (idx in rows_by_position) {
+    i <- allocated$signal_row[idx[1L]]
+    score[idx] <- as.integer(stats::rmultinom(1L, position_reads[i], w[idx] / sum(w[idx])))
+  }
+  # Final probability of each candidate within its group, as in the joint draw.
+  probability <- w * signal_table$score[allocated$signal_row] /
+    group_total_weight[group_id[allocated$signal_row]]
+  data.table::set(allocated, j = "probability", value = probability)
+  data.table::set(allocated, j = "score", value = score)
+  data.table::setattr(allocated, "dropped_reads", dropped)
+  allocated
+}
+
 # Turn signal positions into whole fragments with real coordinates.
 #
 # Up to here a read is just a position: where the ribosome was. A sequenced
@@ -984,6 +1129,14 @@ make_simulated_rpf_fragments <- function(signal_table, transcript_models,
   }
 
   joint <- has_active_fragment_bias(geometry)
+  draw <- fragment_draw_option()
+  if (draw == "two_stage" && joint && !needs_candidate_sequence(geometry) &&
+      geometry$boundary_action != "error") {
+    allocated <- allocate_fragments_two_stage(signal_table, transcript_models,
+                                              candidates, geometry)
+    return(finish_simulated_rpf_fragments(allocated, attr(allocated, "dropped_reads"),
+                                          signal_table, transcript_models, geometry))
+  }
   # Positions without reads cannot produce fragments. When each position keeps
   # its own count (no joint draw), their candidates are skipped: a multinomial
   # draw of size 0 uses no random numbers, so the result is unchanged.

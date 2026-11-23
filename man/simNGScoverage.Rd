@@ -193,7 +193,22 @@ preserving each transcript/region read budget and the input site support.
 Length-specific `codon_bias` and `frame_bias` fields use the same source and
 strength convention; their tables contain codon/frame, fragment_length and
 weight columns. They act during physical-fragment selection and can be
-learned with `learn_end_bias(by_length = TRUE)`.}
+learned with `learn_end_bias(by_length = TRUE)`.
+The joint draw can be made faster with
+\code{options(coverageSim.fragment_draw = "two_stage")} (default
+\code{"joint"}): reads are drawn first over positions, then over lengths and
+offsets. The distribution and the per-region read budgets are the same, but
+for a given seed the reads are not identical to the default draw. It applies
+when no end-bias or codon-bias table is active and \code{boundary_action} is
+not \code{"error"}; otherwise the default draw runs.
+When to use it. Pros: much faster for deep or large simulations (fragment
+step about 10x faster with \code{realistic_rfp_settings()}); same read
+distribution and exact region totals. Cons: reads differ from the default
+draw for the same seed, so results are not reproducible against runs made
+with the default draw (e.g. earlier benchmarks); no speed-up when an end-bias
+or codon-bias table is set (those runs silently use the default draw, the
+end bias itself still works); frame bias is supported. Keep the default when
+outputs must match earlier runs exactly.}
 
 \item{technical_artifacts}{Optional list controlling alignment artifacts in
 simulated RPF SAM/BAM output: duplication_rate and multimapping_rate default
