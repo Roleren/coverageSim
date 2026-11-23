@@ -188,6 +188,12 @@ as_reference_orientation <- function(sequence, strand) {
 simulate_alignment_artifacts <- function(fragment_table, technical_artifacts,
                                          spikes = NULL, models = NULL) {
   settings <- normalize_technical_artifacts(technical_artifacts)
+  # Secondary alignments borrow another molecule's cigar and rebuild SEQ from `sequence` (the footprint), which
+  # does not hold the added 5' base; not supported together yet.
+  if (settings$multimapping_rate > 0 && "added_base" %in% names(fragment_table) &&
+      any(fragment_table$added_base != "none")) {
+    stop("fragment_geometry$added_base cannot be combined with technical_artifacts$multimapping_rate > 0 yet")
+  }
   primary <- expand_fragment_records(fragment_table)
   original_count <- nrow(primary)
 

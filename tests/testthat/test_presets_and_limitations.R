@@ -1,5 +1,5 @@
 # Difficulty presets (Carina item 1) and the cheap known-limitation fixes (item 4): nuclease cut-site context of the
-# end bias (flank), uORF / CDS scanning coupling.
+# end bias (five/three_prime_flank_bias), uORF / CDS scanning coupling.
 
 codon_bias_options_from <- function(p) withr::with_options(p$options, codon_bias_options())
 
@@ -71,11 +71,18 @@ test_that("run_simulation_preset runs a tiny clean simulation and restores optio
   expect_gt(sum(S4Vectors::mcols(ORFik::fimport(f[1]))$score), 0)
 })
 
-test_that("end bias flank = 0 is the old behaviour; flank > 0 reads the bases across the cut", {
-  geometry <- function(flank) list(source = "user",
-    distribution = data.frame(fragment_length = 8L, site_offset = c(1L, 2L), probability = c(0.5, 0.5)),
-    five_prime_bias = list(source = "user", flank = flank,
-                           table = data.table::data.table(kmer = "GA", weight = 4)))
+test_that("cut-site flank table: off is the old behaviour; on favours the base outside the cut", {
+  geometry <- function(flank) {
+    g <- list(source = "user",
+      distribution = data.frame(fragment_length = 8L, site_offset = c(1L, 2L), probability = c(0.5, 0.5)),
+      five_prime_bias = list(source = "user", table = data.table::data.table(kmer = "GA", weight = 4)))
+    if (flank) {
+      g$five_prime_bias <- list(source = "none")
+      g$five_prime_flank_bias <- list(source = "user", table = data.table::data.table(
+        kmer = c("A", "C", "G", "T"), weight = c(1, 1, 4, 1)))
+    }
+    g
+  }
   # fixture: poly-A with G at 28; signal at 30. offset 1 starts at 29 (base before the cut = G),
   # offset 2 starts at 28 (first fragment base = G).
   fx <- end_selection_fixture(); fx$signal <- fx$signal[1]
@@ -84,20 +91,11 @@ test_that("end bias flank = 0 is the old behaviour; flank > 0 reads the bases ac
     r <- make_simulated_rpf_fragments(fx$signal, fx$models, 8L, geometry(flank))
     r[site_offset == 1L, sum(score)] / sum(r$score)
   }
-  expect_equal(share_offset1(0L), 0.2, tolerance = 0.02)   # inside k-mer "GA" at offset 2 is favoured
-  expect_equal(share_offset1(1L), 0.8, tolerance = 0.02)   # cut-site k-mer "G|A" at offset 1 is favoured
-  r <- make_simulated_rpf_fragments(fx$signal, fx$models, 8L, geometry(1L))
-  expect_true(all(r[site_offset == 1L, five_prime_kmer] == "GA"))
-  expect_true(all(r[site_offset == 2L, five_prime_kmer] == "AG"))
-  # three prime end: flank bases come from downstream of the fragment; beyond the transcript is neutral ("N")
-  g <- normalize_fragment_geometry(list(three_prime_bias = list(source = "user", flank = 2L,
-                                        table = data.table::data.table(kmer = "AAA", weight = 2))))
-  expect_equal(end_bias_context_kmer("ACGTACGTAC", 3L, 6L, g$three_prime_bias, TRUE), "CGT")
-  expect_equal(end_bias_context_kmer("ACGTACGTAC", 3L, 9L, g$three_prime_bias, TRUE), "ACN")
-  expect_error(normalize_fragment_geometry(list(five_prime_bias = list(source = "user", flank = 2L,
-                 table = data.table::data.table(kmer = "GA", weight = 2)))), "flank")
-  expect_error(normalize_fragment_geometry(list(five_prime_bias = list(source = "user", flank = -1,
-                 table = data.table::data.table(kmer = "GA", weight = 2)))), "flank")
+  expect_equal(share_offset1(FALSE), 0.2, tolerance = 0.02)  # inside k-mer "GA" at offset 2 is favoured
+  expect_equal(share_offset1(TRUE), 0.8, tolerance = 0.02)   # cut-site base "G" upstream of offset 1 is favoured
+  # one API: the former spanning-k-mer field is rejected with a pointer to the flank tables
+  expect_error(normalize_fragment_geometry(list(five_prime_bias = list(source = "user", flank = 1L,
+                 table = data.table::data.table(kmer = "GA", weight = 2)))), "five_prime_flank_bias")
 })
 
 test_that("scan_coupling = 0 makes uORF translation independent of the CDS; default 1 keeps leaky scanning", {

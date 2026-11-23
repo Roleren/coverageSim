@@ -1,0 +1,5 @@
+method,base,rate,studies,libraries,libraries_with_base
+circularization,T,0.1015,9,171,146
+dual_ligation,G,0,5,25,2
+template_switching,G,0,2,28,6
+ribolace,T,0.1623,2,4,3

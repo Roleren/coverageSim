@@ -14,8 +14,11 @@ normalize_fragment_geometry <- function(fragment_geometry) {
     boundary_action = "renormalize",
     five_prime_bias = list(source = "none"),
     three_prime_bias = list(source = "none"),
+    five_prime_flank_bias = list(source = "none"),
+    three_prime_flank_bias = list(source = "none"),
     codon_bias = list(source = "none"),
-    frame_bias = list(source = "none")
+    frame_bias = list(source = "none"),
+    added_base = list(base = "T", rate = 0)
   )
   if (is.null(fragment_geometry)) return(defaults)
   stopifnot(is.list(fragment_geometry))
@@ -47,10 +50,12 @@ normalize_fragment_geometry <- function(fragment_geometry) {
   if (!is.null(geometry$site_offset)) {
     geometry$site_offset <- as.integer(geometry$site_offset)
   }
-  for (bias_name in c("five_prime_bias", "three_prime_bias")) {
+  for (bias_name in c("five_prime_bias", "three_prime_bias",
+                      "five_prime_flank_bias", "three_prime_flank_bias")) {
     bias <- geometry[[bias_name]]
     geometry[[bias_name]] <- normalize_end_bias(bias, bias_name)
   }
+  geometry$added_base <- normalize_added_base(geometry$added_base)
   geometry$codon_bias <- normalize_fragment_feature_bias(
     geometry$codon_bias, "codon_bias", "codon"
   )
@@ -147,45 +152,58 @@ normalize_end_bias <- function(bias, bias_name) {
       !is.finite(strength) || strength < 0) {
     stop(bias_name, " strength must be one finite non-negative number")
   }
-  flank <- if (is.null(bias$flank)) 0L else bias$flank
-  if (!is.numeric(flank) || length(flank) != 1L || !is.finite(flank) || flank < 0 ||
-      flank != as.integer(flank)) {
-    stop(bias_name, " flank must be one non-negative integer")
+  if (!is.null(bias$flank)) {
+    stop(bias_name, "$flank is not supported: model the nuclease cut site with ",
+         "fragment_geometry$five_prime_flank_bias / three_prime_flank_bias (learn_end_bias(flank = TRUE))")
   }
-  flank <- as.integer(flank)
   if (bias$source %in% c("none", "default")) {
-    return(list(source = bias$source, table = NULL, strength = strength, flank = flank))
+    return(list(source = bias$source, table = NULL, strength = strength))
   }
   if (is.null(bias$table)) {
     stop("fragment_geometry$", bias_name, " requires a kmer/weight table")
   }
-  table <- validate_end_bias_table(bias$table, bias_name)
-  if (flank > 0L && flank >= unique(nchar(table$kmer))[1L]) {
-    stop(bias_name, " flank must be smaller than the k-mer length (at least one base inside the fragment)")
-  }
-  list(source = bias$source, table = table, strength = strength, flank = flank)
+  list(source = bias$source, table = validate_end_bias_table(bias$table, bias_name),
+       strength = strength)
 }
 
-# Nuclease cut-site context (opt-in, flank > 0): the k-mer of an end spans the cut, i.e. `flank` bases outside the
-# fragment (upstream of the 5' end, downstream of the 3' end) and k - flank bases inside. RNase stops trimming
-# depending on the bases on both sides of the cut, which the fragment's own bases alone cannot express. Positions
-# beyond the transcript are "N", so such k-mers match no table row and stay neutral.
-end_bias_context_kmer <- function(transcript_sequence, tx_start, tx_end, bias, three_prime = FALSE) {
+# The non-templated 5' base (opt-in, rate 0 = off): library preparation adds `base` in front of the footprint 5'
+# end of a share `rate` of the fragments (reverse transcriptase in circularization libraries, mostly T; the TSO rG
+# in template switching). See add_nontemplated_5prime_base().
+normalize_added_base <- function(added_base) {
+  if (is.null(added_base)) added_base <- list()
+  if (!is.list(added_base)) stop("fragment_geometry$added_base must be a list(base, rate)")
+  unknown <- setdiff(names(added_base), c("base", "rate"))
+  if (length(unknown)) stop("Unknown fragment_geometry$added_base field(s): ", paste(unknown, collapse = ", "))
+  added_base <- utils::modifyList(list(base = "T", rate = 0), added_base)
+  if (!is.character(added_base$base) || length(added_base$base) != 1L ||
+      !toupper(added_base$base) %in% c("A", "C", "G", "T")) {
+    stop("fragment_geometry$added_base$base must be one of A, C, G, T")
+  }
+  rate <- added_base$rate
+  if (!is.numeric(rate) || length(rate) != 1L || !is.finite(rate) || rate < 0 || rate > 1) {
+    stop("fragment_geometry$added_base$rate must be one number from 0 to 1")
+  }
+  list(base = toupper(added_base$base), rate = as.numeric(rate))
+}
+
+has_added_base <- function(geometry) {
+  !is.null(geometry$added_base) && geometry$added_base$rate > 0
+}
+
+# Cut-site (flank) k-mers: the bases just outside the fragment, read 5' to 3' along the transcript. The 5' flank
+# is the k bases upstream of the 5' end (its last base touches the end), the 3' flank the k bases downstream of the
+# 3' end (its first base touches the end). They carry the nuclease cut-site preference, while five_prime_bias and
+# three_prime_bias (the bases inside the fragment) carry the ligation / RT chemistry. Where the flank runs past the
+# transcript the k-mer is "" and the fragment gets weight 1 for that end.
+end_flank_kmer <- function(transcript_sequence, tx_start, tx_end, bias, three_prime = FALSE) {
   if (is.null(bias$table)) return(NULL)
   k <- unique(nchar(bias$table$kmer))
-  flank <- bias$flank
-  pad <- strrep("N", flank)
-  padded <- paste0(pad, transcript_sequence, pad)
-  if (three_prime) {
-    from <- tx_end - (k - flank) + 1L
-  } else from <- tx_start - flank
-  substr(padded, from + flank, from + flank + k - 1L)
-}
-
-has_end_bias_flank <- function(geometry) {
-  any(vapply(geometry[c("five_prime_bias", "three_prime_bias")], function(b) {
-    !is.null(b$table) && isTRUE(b$flank > 0L)
-  }, logical(1)))
+  if (length(k) != 1L) stop("Each end-bias table must use one k-mer length")
+  from <- if (three_prime) tx_end + 1L else tx_start - k
+  to <- from + k - 1L
+  kmer <- substr(transcript_sequence, from, to)
+  kmer[from < 1L | to > nchar(transcript_sequence)] <- ""
+  kmer
 }
 
 # How much a fragment's own end sequences change its chance of being sequenced.
@@ -211,7 +229,8 @@ has_end_bias_flank <- function(geometry) {
 # of them.
 end_bias_weight <- function(sequence, fragment_length,
                             five_bias, three_bias,
-                            five_kmer = NULL, three_kmer = NULL) {
+                            five_flank_bias = NULL, three_flank_bias = NULL,
+                            five_flank_kmer = NULL, three_flank_kmer = NULL) {
   lookup <- function(kmer, bias) {
     if (is.null(bias$table) || identical(bias$strength, 0)) {
       return(rep(1, length(sequence)))
@@ -247,9 +266,13 @@ end_bias_weight <- function(sequence, fragment_length,
     if (from_end) substr(sequence, nchar(sequence) - k + 1L, nchar(sequence))
     else substr(sequence, 1L, k)
   }
-  if (is.null(five_kmer)) five_kmer <- extract_kmer(five_bias)
-  if (is.null(three_kmer)) three_kmer <- extract_kmer(three_bias, TRUE)
-  lookup(five_kmer, five_bias) * lookup(three_kmer, three_bias)
+  weight <- lookup(extract_kmer(five_bias), five_bias) *
+    lookup(extract_kmer(three_bias, TRUE), three_bias)
+  # Cut-site terms (bases outside the fragment), multiplied in like a third and fourth end; a flank k-mer the
+  # table does not list (also "" past the transcript end) is neutral.
+  if (!is.null(five_flank_bias$table)) weight <- weight * lookup(five_flank_kmer, five_flank_bias)
+  if (!is.null(three_flank_bias$table)) weight <- weight * lookup(three_flank_kmer, three_flank_bias)
+  weight
 }
 
 end_bias_kmer <- function(sequence, bias, from_end = FALSE) {
@@ -686,12 +709,14 @@ fragment_alignments <- function(models, model_index, transcript_start,
 }
 
 # Whether candidate weights depend on the fragment sequence: an end-bias table
-# (k-mers at the fragment ends) or a codon-bias table (codon at the site) with
+# (k-mers at the fragment ends), a cut-site flank table (bases just outside the
+# fragment) or a codon-bias table (codon at the site) with
 # non-zero strength. Mirrors the checks in end_bias_weight() and
 # fragment_feature_weights(), which return weight 1 otherwise.
 needs_candidate_sequence <- function(geometry) {
   active <- function(bias) !is.null(bias$table) && !identical(bias$strength, 0)
   active(geometry$five_prime_bias) || active(geometry$three_prime_bias) ||
+    active(geometry$five_prime_flank_bias) || active(geometry$three_prime_flank_bias) ||
     active(geometry$codon_bias)
 }
 
@@ -709,7 +734,8 @@ fragment_draw_option <- function() {
 }
 
 has_active_fragment_bias <- function(geometry) {
-  bias_names <- c("five_prime_bias", "three_prime_bias", "codon_bias", "frame_bias")
+  bias_names <- c("five_prime_bias", "three_prime_bias", "five_prime_flank_bias",
+                  "three_prime_flank_bias", "codon_bias", "frame_bias")
   any(vapply(geometry[bias_names], function(bias) {
     !is.null(bias$table) && bias$strength > 0
   }, logical(1)))
@@ -840,25 +866,19 @@ fragment_candidates <- function(signal_table, transcript_models, candidates,
   pairs[, frame := if ("region_position" %in% names(signal_table)) {
     as.integer((signal_table$region_position[signal_row] - 1L) %% 3L)
   } else 0L]
-  if (has_end_bias_flank(geometry)) {
-    # Cut-site context: k-mers taken from the transcript around each end (flank > 0).
-    pairs[, five_prime_kmer := if (isTRUE(geometry$five_prime_bias$flank > 0L))
-      end_bias_context_kmer(transcript_sequence, tx_start, tx_end, geometry$five_prime_bias)
-      else end_bias_kmer(sequence, geometry$five_prime_bias)]
-    pairs[, three_prime_kmer := if (isTRUE(geometry$three_prime_bias$flank > 0L))
-      end_bias_context_kmer(transcript_sequence, tx_start, tx_end, geometry$three_prime_bias, TRUE)
-      else end_bias_kmer(sequence, geometry$three_prime_bias, TRUE)]
-    pairs[, end_bias_weight := end_bias_weight(
-      sequence, fragment_length, geometry$five_prime_bias, geometry$three_prime_bias,
-      if (is.null(geometry$five_prime_bias$table)) NULL else five_prime_kmer,
-      if (is.null(geometry$three_prime_bias$table)) NULL else three_prime_kmer
-    )]
-  } else {
-    pairs[, end_bias_weight := end_bias_weight(
-      sequence, fragment_length,
-      geometry$five_prime_bias, geometry$three_prime_bias
-    )]
+  five_flank <- three_flank <- NULL
+  if (needs_candidate_sequence(geometry)) {
+    five_flank <- end_flank_kmer(transcript_sequence, pairs$tx_start, pairs$tx_end,
+                                 geometry$five_prime_flank_bias)
+    three_flank <- end_flank_kmer(transcript_sequence, pairs$tx_start, pairs$tx_end,
+                                  geometry$three_prime_flank_bias, three_prime = TRUE)
   }
+  pairs[, end_bias_weight := end_bias_weight(
+    sequence, fragment_length,
+    geometry$five_prime_bias, geometry$three_prime_bias,
+    geometry$five_prime_flank_bias, geometry$three_prime_flank_bias,
+    five_flank, three_flank
+  )]
   pairs[, codon_bias_weight := fragment_feature_weights(
     codon, fragment_length, geometry$codon_bias, "codon"
   )]
@@ -1295,6 +1315,13 @@ finish_simulated_rpf_fragments <- function(allocated, dropped, signal_table,
     fragment_bias_weight = drawn$bias_weight,
     final_probability = drawn$probability
   )
+  if (has_added_base(geometry)) {
+    transcript_sequence <- vapply(used_models, function(model) model$sequence,
+                                  character(1))[model_index]
+    exon_start <- lapply(used_models, function(model) model$cumulative_start)[model_index]
+    result <- add_nontemplated_5prime_base(result, geometry$added_base, transcript_sequence,
+                                           drawn$tx_start, exon_start)
+  }
   result[, fragment_id := sprintf("fragment_%d", seq_len(.N))]
   if (is.null(dropped) || !nrow(dropped)) {
     dropped <- data.table::data.table(sampling_group = character(0),
@@ -1303,6 +1330,57 @@ finish_simulated_rpf_fragments <- function(allocated, dropped, signal_table,
   }
   data.table::setattr(result, "dropped_reads", dropped)
   result
+}
+
+# The non-templated 5' base (fragment_geometry$added_base, opt-in).
+#
+# Reverse transcriptase (circularization libraries) or the template-switching oligo adds a base in front of the
+# footprint 5' end of some reads. Each fragment's reads get it with probability `rate` (binomial split of the
+# score). The read is then one base longer than the footprint. An aligner soft clips the added base when it does
+# not match the genome base upstream of the footprint ("clipped": cigar 1S at the read 5' end), and aligns it when
+# it does ("hidden": the alignment starts one base early and is one base longer, so the read looks like a footprint
+# of length L + 1 whose 5' end starts with the added base). The upstream base is taken from the transcript; at an
+# exon start (or the transcript start) the genome base upstream is intronic or unknown here, and the added base is
+# then treated as clipped.
+#
+# Only the alignment changes (start, end, cigar, reference_sequence); the ground-truth columns (fragment_start,
+# fragment_end, five_prime_end, fragment_length, sequence) keep describing the footprint. The column
+# `added_base` says "none", "clipped" or "hidden" for every row. Rows that get the base are split off with their
+# own score, right after the row they came from.
+add_nontemplated_5prime_base <- function(result, added_base, transcript_sequence, tx_start, exon_start) {
+  n <- nrow(result)
+  added_n <- stats::rbinom(n, result$score, added_base$rate)
+  base <- added_base$base
+  upstream <- substr(transcript_sequence, tx_start - 1L, tx_start - 1L)
+  at_exon_start <- vapply(seq_len(n), function(i) tx_start[i] %in% exon_start[[i]], logical(1))
+  hidden <- upstream == base & !at_exon_start
+  keep <- result[, `:=`(added_base = "none", source_row = seq_len(n))]
+  keep[, score := score - added_n]
+  add <- data.table::copy(keep[added_n > 0])
+  if (nrow(add)) {
+    add[, score := added_n[added_n > 0]]
+    h <- hidden[added_n > 0]
+    plus <- add$strand == "+"
+    grow_first <- function(cigar) {
+      m <- as.integer(sub("^([0-9]+)M.*$", "\\1", cigar))
+      paste0(m + 1L, sub("^[0-9]+M", "M", cigar))
+    }
+    grow_last <- function(cigar) {
+      m <- as.integer(sub("^(.*[A-Z])?([0-9]+)M$", "\\2", cigar))
+      paste0(sub("[0-9]+M$", "", cigar), m + 1L, "M")
+    }
+    complement <- chartr("ACGT", "TGCA", base)
+    add[plus, reference_sequence := paste0(base, reference_sequence)]
+    add[!plus, reference_sequence := paste0(reference_sequence, complement)]
+    add[h & plus, `:=`(start = start - 1L, cigar = grow_first(cigar), added_base = "hidden")]
+    add[h & !plus, `:=`(end = end + 1L, cigar = grow_last(cigar), added_base = "hidden")]
+    add[!h & plus, `:=`(cigar = paste0("1S", cigar), added_base = "clipped")]
+    add[!h & !plus, `:=`(cigar = paste0(cigar, "1S"), added_base = "clipped")]
+  }
+  out <- data.table::rbindlist(list(keep[score > 0L], add))
+  out <- out[order(source_row, added_base != "none")]
+  out[, source_row := NULL]
+  out[]
 }
 
 simulated_rpf_alignments <- function(fragment_table, seqinfo) {
@@ -1376,6 +1454,7 @@ write_fragment_ground_truth <- function(fragment_table, file_base,
     "end_bias_weight", "codon_bias_weight", "frame_bias_weight",
     "fragment_bias_weight", "final_probability"
   )
+  if ("added_base" %in% names(fragment_table)) columns <- c(columns, "added_base")
   data.table::fwrite(fragment_table[, ..columns], path, sep = "\t")
   path
 }
