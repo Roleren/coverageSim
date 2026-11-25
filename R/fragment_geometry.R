@@ -977,13 +977,10 @@ fragment_signal_fits <- function(signal_table, transcript_models, candidates) {
   tx_length <- vapply(used_models, function(model) {
     if (is.null(model)) NA_real_ else as.numeric(model$length)
   }, numeric(1))[model_index]
-  fits <- logical(nrow(signal_table))
-  for (k in seq_len(nrow(candidates))) {
-    tx_start <- site_tx - candidates$site_offset[k]
-    fits <- fits | (!is.na(tx_start) & tx_start >= 1L &
-                      tx_start + candidates$fragment_length[k] - 1L <= tx_length)
-  }
-  list(has_model = has_model, site_tx = site_tx, fits = fits)
+  fits <- fragment_fits_cpp(as.integer(site_tx), as.numeric(tx_length),
+                            as.integer(candidates$fragment_length),
+                            as.integer(candidates$site_offset))
+  list(has_model = has_model, site_tx = site_tx, tx_length = tx_length, fits = fits)
 }
 
 # The groups whose read budgets are kept: the region of a transcript when the
@@ -1292,6 +1289,21 @@ allocate_fragments_in_chunks <- function(signal_table, transcript_models,
   draw <- fragment_draw_budgets(signal_table, joint)
   # Chunks over the positions that have room; the others have no candidates.
   rows_with_room <- build_rows[fits$fits]
+  # The compiled draw needs a frame (0-2) for every position; a missing region
+  # position (NA frame) is left to the R draw.
+  if (length(rows_with_room) && !needs_candidate_sequence(geometry) &&
+      fragment_cpp_option() &&
+      (!"region_position" %in% names(candidate_signal_table) ||
+       !anyNA(candidate_signal_table$region_position[rows_with_room]))) {
+    room <- which(fits$fits)
+    allocated <- fragment_draw_compiled(candidate_signal_table, signal_table,
+                                        candidates, geometry, draw,
+                                        rows_with_room, fits$site_tx[room],
+                                        fits$tx_length[room])
+    if (joint) dropped <- fragment_dropped_reads(draw$budgets,
+                                                 unique(draw$group_id[rows_with_room]))
+    return(list(allocated = allocated, dropped = dropped, signal_table = signal_table))
+  }
   target <- max(1, floor(chunk_rows / max(1L, nrow(candidates))))
   chunks <- fragment_row_chunks(draw$group_id[rows_with_room], target)
   present <- logical(nrow(draw$budgets))
@@ -1313,6 +1325,69 @@ allocate_fragments_in_chunks <- function(signal_table, transcript_models,
   allocated <- data.table::rbindlist(kept)
   if (joint) dropped <- fragment_dropped_reads(draw$budgets, which(present))
   list(allocated = allocated, dropped = dropped, signal_table = signal_table)
+}
+
+# Whether make_simulated_rpf_fragments() draws in compiled code when no
+# candidate weight depends on the fragment sequence:
+# options(coverageSim.fragment_compiled_draw), default TRUE. Same results as
+# the R draw; FALSE uses the R draw (for comparisons).
+fragment_cpp_option <- function() {
+  use <- getOption("coverageSim.fragment_compiled_draw", TRUE)
+  if (!is.logical(use) || length(use) != 1L || is.na(use)) {
+    stop("options(coverageSim.fragment_compiled_draw) must be TRUE or FALSE")
+  }
+  use
+}
+
+# The draw of allocate_fragments_in_chunks() in compiled code, for geometries
+# without end-bias or codon-bias tables: candidate weight = geometry
+# probability x frame weight x position score, drawn per group with the same
+# arithmetic and random numbers as draw_fragment_groups(). Candidates are never
+# stored; only drawn ones are returned, with the columns of
+# fragment_candidates() and draw_fragment_groups() (sequence and codon are left
+# to finish_simulated_rpf_fragments(), as in the R path).
+fragment_draw_compiled <- function(candidate_signal_table, signal_table,
+                                   candidates, geometry, draw, rows, site_tx,
+                                   tx_length) {
+  n_pairs <- nrow(candidates)
+  frame <- if ("region_position" %in% names(candidate_signal_table)) {
+    as.integer((candidate_signal_table$region_position[rows] - 1L) %% 3L)
+  } else integer(length(rows))
+  # Frame weight of every (frame, pair), from the same lookup as the R path.
+  frame_weight <- fragment_feature_weights(rep(0:2, each = n_pairs),
+                                           rep(candidates$fragment_length, 3L),
+                                           geometry$frame_bias, "frame")
+  drawn <- fragment_draw_cpp(as.integer(site_tx), as.numeric(tx_length), frame,
+                             as.numeric(signal_table$score[rows]),
+                             as.integer(draw$group_id[rows]),
+                             as.numeric(draw$budgets$total),
+                             as.integer(candidates$fragment_length),
+                             as.integer(candidates$site_offset),
+                             as.numeric(candidates$probability),
+                             as.numeric(frame_weight))
+  k <- drawn$pair
+  signal_row <- rows[drawn$row]
+  site <- as.integer(site_tx)[drawn$row]
+  fragment_length <- candidates$fragment_length[k]
+  site_offset <- candidates$site_offset[k]
+  data.table::data.table(
+    signal_row = signal_row,
+    fragment_length = fragment_length,
+    site_offset = site_offset,
+    probability = drawn$probability,
+    tx_start = site - site_offset,
+    tx_end = site - site_offset + fragment_length - 1L,
+    sequence = NA_character_,
+    codon = NA_character_,
+    frame = frame[drawn$row],
+    end_bias_weight = rep(1, length(k)),
+    codon_bias_weight = rep(1, length(k)),
+    frame_bias_weight = drawn$frame_bias_weight,
+    bias_weight = drawn$frame_bias_weight,
+    geometry_probability = drawn$geometry_probability,
+    sampling_group = draw$labels[signal_row],
+    score = drawn$score
+  )
 }
 
 # Drawn candidates -> fragment table with genome coordinates (the second half of

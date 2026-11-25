@@ -45,6 +45,39 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// fragment_draw_cpp
+List fragment_draw_cpp(IntegerVector site_tx, NumericVector tx_length, IntegerVector frame, NumericVector score, IntegerVector group, NumericVector total, IntegerVector pair_length, IntegerVector pair_offset, NumericVector pair_prob, NumericVector frame_weight);
+RcppExport SEXP _coverageSim_fragment_draw_cpp(SEXP site_txSEXP, SEXP tx_lengthSEXP, SEXP frameSEXP, SEXP scoreSEXP, SEXP groupSEXP, SEXP totalSEXP, SEXP pair_lengthSEXP, SEXP pair_offsetSEXP, SEXP pair_probSEXP, SEXP frame_weightSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type site_tx(site_txSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type tx_length(tx_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type frame(frameSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type score(scoreSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type group(groupSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type total(totalSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type pair_length(pair_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type pair_offset(pair_offsetSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type pair_prob(pair_probSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type frame_weight(frame_weightSEXP);
+    rcpp_result_gen = Rcpp::wrap(fragment_draw_cpp(site_tx, tx_length, frame, score, group, total, pair_length, pair_offset, pair_prob, frame_weight));
+    return rcpp_result_gen;
+END_RCPP
+}
+// fragment_fits_cpp
+LogicalVector fragment_fits_cpp(IntegerVector site_tx, NumericVector tx_length, IntegerVector pair_length, IntegerVector pair_offset);
+RcppExport SEXP _coverageSim_fragment_fits_cpp(SEXP site_txSEXP, SEXP tx_lengthSEXP, SEXP pair_lengthSEXP, SEXP pair_offsetSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type site_tx(site_txSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type tx_length(tx_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type pair_length(pair_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type pair_offset(pair_offsetSEXP);
+    rcpp_result_gen = Rcpp::wrap(fragment_fits_cpp(site_tx, tx_length, pair_length, pair_offset));
+    return rcpp_result_gen;
+END_RCPP
+}
 // feature_stop_positions
 Rcpp::IntegerVector feature_stop_positions(Rcpp::CharacterVector bases, Rcpp::IntegerVector positions, Rcpp::CharacterVector stop_codons);
 RcppExport SEXP _coverageSim_feature_stop_positions(SEXP basesSEXP, SEXP positionsSEXP, SEXP stop_codonsSEXP) {
@@ -62,6 +95,8 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_coverageSim_sample_uniform_regions_cpp", (DL_FUNC) &_coverageSim_sample_uniform_regions_cpp, 3},
     {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 12},
+    {"_coverageSim_fragment_draw_cpp", (DL_FUNC) &_coverageSim_fragment_draw_cpp, 10},
+    {"_coverageSim_fragment_fits_cpp", (DL_FUNC) &_coverageSim_fragment_fits_cpp, 4},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}
 };

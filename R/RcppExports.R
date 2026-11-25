@@ -9,6 +9,14 @@ write_feature_sequences_cpp <- function(tx, leader, cds_length, gene, start, end
     .Call(`_coverageSim_write_feature_sequences_cpp`, tx, leader, cds_length, gene, start, end, classes, starts, has_start, chosen_stops, stop_codons, max_rounds)
 }
 
+fragment_draw_cpp <- function(site_tx, tx_length, frame, score, group, total, pair_length, pair_offset, pair_prob, frame_weight) {
+    .Call(`_coverageSim_fragment_draw_cpp`, site_tx, tx_length, frame, score, group, total, pair_length, pair_offset, pair_prob, frame_weight)
+}
+
+fragment_fits_cpp <- function(site_tx, tx_length, pair_length, pair_offset) {
+    .Call(`_coverageSim_fragment_fits_cpp`, site_tx, tx_length, pair_length, pair_offset)
+}
+
 feature_stop_positions <- function(bases, positions, stop_codons) {
     .Call(`_coverageSim_feature_stop_positions`, bases, positions, stop_codons)
 }
