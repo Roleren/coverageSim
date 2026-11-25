@@ -13,6 +13,10 @@ rdg_parameters(
   reinit_after_cds = 0.05,
   p_frameshift = 0.05,
   p_readthrough = 0.02,
+  p_init_translon = 0.3,
+  translon_classes = c("uORF", "uoORF", "NTE"),
+  translon_gene_sd = 0,
+  uoorf_cds_factor = 0.8,
   conditions = list()
 )
 }
@@ -37,6 +41,32 @@ can initiate again (ternary complex re-acquisition).}
 
 \item{p_readthrough}{default fraction of CDS ribosomes that read through the
 CDS stop into a "CTE" feature.}
+
+\item{p_init_translon}{one initiation probability (default 0.3) for the start of the extra translated features
+whose class is in \code{translon_classes}, used instead of \code{p_init}; the CDS start and other classes keep
+\code{p_init} (also a per-condition \code{p_init}; \code{p_init_scale} still applies). NULL gives the behaviour
+before 2026-11 (every start uses \code{p_init} by its start codon). Fitted on 62 human marker genes with
+Ribo-seq-detected uORFs (clean-CDS usage, 5-fold cross-validation by gene): a codon-specific fit drove
+near-cognate starts to ~1 (selection effect: detected translons are used whatever their start codon), while one
+shared value of 0.3 cut the held-out RMSE on the logit scale from 1.67 (NULL) to 1.00.
+With 0.3 a translated uORF captures few ribosomes, so delayed reinitiation (ATF4-like ISR via
+\code{reinit_distance}) moves little to the CDS; for that regulation use NULL and a strong uORF start.}
+
+\item{translon_classes}{feature classes that \code{p_init_translon} applies to, default the classes that start in
+the leader and were in the fit: \code{c("uORF", "uoORF", "NTE")}. Downstream and internal ORFs (dORF, doORF,
+intORF) were not in the fitted panel and keep \code{p_init}.}
+
+\item{translon_gene_sd}{numeric >= 0, default 0 (off). sd of a per-gene log-normal factor (mean 1) on the initiation
+probabilities of the gene's extra features in \code{translon_classes}, drawn once per \code{simRDGflow()} call (shared by all libraries and
+conditions; stored in \code{metadata(result)$rdg_gene_factor}). Real genes vary much more than uORF count and
+overlap predict (Kozak context, uORF peptide, structure); 0.5 matches the spread of real clean-CDS usage in the
+same 62 genes (variance of logit usage 1.66 vs 1.69 real).}
+
+\item{uoorf_cds_factor}{numeric in (0, 1], default 0.8 (1 = off, the behaviour before 2026-11). Extra factor on
+the CDS initiations for every overlapping uoORF of the gene, on top of the ribosomes the uoORF already takes from
+the scanning flux. Overlapping uoORFs repress the clean CDS more than the flow model alone predicts: with
+\code{p_init_translon = 0.3}, 0.8 lowers the held-out RMSE (logit) to 0.93 and moves the uoORF effect (logit
+slope) from -0.65 to -1.01 (real -1.15).}
 
 \item{conditions}{named list: per condition (as in the count table's
 \code{condition} column) a list of parameters that replace the defaults, or

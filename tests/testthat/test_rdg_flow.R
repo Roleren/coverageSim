@@ -1,6 +1,7 @@
 # Ribosome flow on the RDG (plan step 4): analytic cases and the coupled read split.
 
-flat <- function(...) rdg_parameters(conditions = list(), ...)
+# Analytic cases of the scanning model with the codon table for every start (p_init_translon = NULL, uoorf_cds_factor = 1).
+flat <- function(...) rdg_parameters(conditions = list(), p_init_translon = NULL, uoorf_cds_factor = 1, ...)
 
 test_that("a uORF that captures every ribosome leaves none for the CDS", {
   p <- flat(p_init = c(ATG = 1), reinit_max = 0)
@@ -33,7 +34,7 @@ test_that("ATF4-like: under ISR ribosomes skip the uoORF and reach the CDS", {
   # uORF1 1-12, uoORF 100-489 (ends inside the CDS), CDS 400-1000.
   args <- list(starts = c(1L, 100L), ends = c(12L, 489L), classes = c("uORF", "uoORF"),
                start_codons = c("ATG", "ATG"), L = 399L, C = 1000L)
-  params <- rdg_parameters(reinit_distance = 50,
+  params <- rdg_parameters(reinit_distance = 50, p_init_translon = NULL, uoorf_cds_factor = 1,
                            conditions = list(ISR = list(reinit_distance = 200)))
   wt <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(params, "WT"))))
   isr <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(params, "ISR"))))

@@ -1,5 +1,27 @@
 # coverageSim (development version)
 
+* `rdg_parameters()`: new defaults for the uORF -> CDS coupling (a deliberate realism
+  change; every `simRDGflow()` result changes). Fitted on 62 human marker genes with
+  Ribo-seq-detected uORFs (clean-CDS usage, 5-fold cross-validation by gene, held-out
+  RMSE on the logit scale 1.67 with the old defaults):
+  - `p_init_translon = 0.3`: one initiation probability for the leader translons
+    instead of the codon table (RMSE 1.00); `translon_classes` (default uORF,
+    uoORF, NTE: the leader classes of the fit) sets which classes; dORF, doORF and
+    intORF keep the codon table.
+  - `uoorf_cds_factor = 0.8`: extra CDS repression per overlapping uoORF (RMSE 0.93
+    together with `p_init_translon = 0.3`; 2000 gene bootstraps: gain positive in
+    100%, 0.3 chosen in 61%, 0.6-0.9 for the factor in 91%).
+  - `translon_gene_sd` (opt-in, default 0): per-gene log-normal factor on the
+    translons' initiation, drawn once per `simRDGflow()` call; 0.5 matches the real
+    spread of clean-CDS usage. It changes the random stream, so it stays off.
+  Impact (500 genes, `architecture = "all"`, same seeds): CDS share of translated
+  reads 0.44 -> 0.73 (per-gene median 0.30 -> 0.73; 349 of 500 genes change by
+  > 0.1); uORF read share 0.167 -> 0.045, uoORF 0.251 -> 0.134. With leader
+  translons at 0.3 the ATF4-like response to a longer `reinit_distance` is much
+  weaker (CDS gain under ISR 3.7x -> 1.1x in the test gene). The old behaviour:
+  `rdg_parameters(p_init_translon = NULL, uoorf_cds_factor = 1)`.
+  `simulation_preset()` does not call `simRDGflow()` and is unchanged.
+
 * New opt-in faster fragment draw: `options(coverageSim.fragment_draw = "two_stage")`
   (default `"joint"`, unchanged). Reads are drawn first over positions, then over
   fragment lengths and offsets. The distribution and the per-region read budgets
