@@ -31,15 +31,28 @@ test_that("near-cognate starts initiate less, and reinitiation needs distance", 
 })
 
 test_that("ATF4-like: under ISR ribosomes skip the uoORF and reach the CDS", {
-  # uORF1 1-12, uoORF 100-489 (ends inside the CDS), CDS 400-1000.
+  # uORF1 1-12, uoORF 100-489 (ends inside the CDS), CDS 400-1000. New defaults (p_init_translon = 0.3): the ISR-type
+  # scenario (reinit_distance changes between conditions) exempts this reinitiation-type gene, so it keeps the codon table.
   args <- list(starts = c(1L, 100L), ends = c(12L, 489L), classes = c("uORF", "uoORF"),
                start_codons = c("ATG", "ATG"), L = 399L, C = 1000L)
-  params <- rdg_parameters(reinit_distance = 50, p_init_translon = NULL, uoorf_cds_factor = 1,
-                           conditions = list(ISR = list(reinit_distance = 200)))
-  wt <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(params, "WT"))))
-  isr <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(params, "ISR"))))
+  params <- rdg_parameters(reinit_distance = 50, conditions = list(ISR = list(reinit_distance = 200)))
+  ex <- rdg_translon_exempt(params, "ATF4", list(args$classes), list(args$ends), list(args$L))
+  expect_true(ex[["ATF4"]])
+  load <- function(cond, exempt) do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(params, cond),
+                                                                     exempt = exempt)))
+  wt <- load("WT", ex[["ATF4"]]); isr <- load("ISR", ex[["ATF4"]])
   expect_gt(wt$initiations[2], isr$initiations[2])
   expect_gt(isr$cds_initiations, 2 * wt$cds_initiations)
+  expect_equal(isr$cds_initiations / wt$cds_initiations, 3.71, tolerance = 0.01)
+  # without the exemption the leader translons start at 0.3 and the ISR response almost vanishes (about 1.1x)
+  wt0 <- load("WT", FALSE); isr0 <- load("ISR", FALSE)
+  expect_equal(isr0$cds_initiations / wt0$cds_initiations, 1.08, tolerance = 0.01)
+  # old behaviour (codon table for every start, no extra uoORF repression) keeps the same ratio
+  old <- rdg_parameters(reinit_distance = 50, p_init_translon = NULL, uoorf_cds_factor = 1,
+                        conditions = list(ISR = list(reinit_distance = 200)))
+  wo <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(old, "WT"))))
+  io <- do.call(rdg_gene_loads, c(args, list(params = rdg_condition_parameters(old, "ISR"))))
+  expect_equal(io$cds_initiations / wo$cds_initiations, isr$cds_initiations / wt$cds_initiations)
 })
 
 test_that("simRDGflow keeps each gene's reads and the read simulation follows its shares", {

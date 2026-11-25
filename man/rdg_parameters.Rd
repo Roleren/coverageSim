@@ -17,6 +17,7 @@ rdg_parameters(
   translon_classes = c("uORF", "uoORF", "NTE"),
   translon_gene_sd = 0,
   uoorf_cds_factor = 0.8,
+  translon_exempt = "auto",
   conditions = list()
 )
 }
@@ -50,7 +51,7 @@ Ribo-seq-detected uORFs (clean-CDS usage, 5-fold cross-validation by gene): a co
 near-cognate starts to ~1 (selection effect: detected translons are used whatever their start codon), while one
 shared value of 0.3 cut the held-out RMSE on the logit scale from 1.67 (NULL) to 1.00.
 With 0.3 a translated uORF captures few ribosomes, so delayed reinitiation (ATF4-like ISR via
-\code{reinit_distance}) moves little to the CDS; for that regulation use NULL and a strong uORF start.}
+\code{reinit_distance}) moves little to the CDS; \code{translon_exempt} keeps such genes on the codon table.}
 
 \item{translon_classes}{feature classes that \code{p_init_translon} applies to, default the classes that start in
 the leader and were in the fit: \code{c("uORF", "uoORF", "NTE")}. Downstream and internal ORFs (dORF, doORF,
@@ -67,6 +68,15 @@ the CDS initiations for every overlapping uoORF of the gene, on top of the ribos
 the scanning flux. Overlapping uoORFs repress the clean CDS more than the flow model alone predicts: with
 \code{p_init_translon = 0.3}, 0.8 lowers the held-out RMSE (logit) to 0.93 and moves the uoORF effect (logit
 slope) from -0.65 to -1.01 (real -1.15).}
+
+\item{translon_exempt}{genes that keep the start-codon table (\code{p_init}) for their leader translons although
+\code{p_init_translon} is set (no per-gene factor either). Default \code{"auto"}: when a condition changes
+\code{reinit_distance} (an ISR-type scenario), every gene with the delayed-reinitiation layout (a translated uORF
+followed by a uoORF that overlaps the CDS start: ATF4 / ATF5 / PPP1R15A-like) is exempt, so its CDS keeps the
+strong reinitiation response; genes with only a uORF (or only a uoORF) keep \code{p_init_translon}. Otherwise no
+gene is exempt. Also NULL (none), a character vector of transcript ids, or a function
+\code{function(gene, classes, ends, L)} returning TRUE for an exempt gene (classes / ends of its translated
+features, L = leader length). \code{simRDGflow()} stores the exempt genes in \code{metadata(result)$rdg_translon_exempt}.}
 
 \item{conditions}{named list: per condition (as in the count table's
 \code{condition} column) a list of parameters that replace the defaults, or

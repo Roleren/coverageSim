@@ -36,7 +36,7 @@
 #'  near-cognate starts to ~1 (selection effect: detected translons are used whatever their start codon), while one
 #'  shared value of 0.3 cut the held-out RMSE on the logit scale from 1.67 (NULL) to 1.00.
 #'  With 0.3 a translated uORF captures few ribosomes, so delayed reinitiation (ATF4-like ISR via
-#'  \code{reinit_distance}) moves little to the CDS; for that regulation use NULL and a strong uORF start.
+#'  \code{reinit_distance}) moves little to the CDS; \code{translon_exempt} keeps such genes on the codon table.
 #' @param translon_classes feature classes that \code{p_init_translon} applies to, default the classes that start in
 #'  the leader and were in the fit: \code{c("uORF", "uoORF", "NTE")}. Downstream and internal ORFs (dORF, doORF,
 #'  intORF) were not in the fitted panel and keep \code{p_init}.
@@ -50,6 +50,14 @@
 #'  the scanning flux. Overlapping uoORFs repress the clean CDS more than the flow model alone predicts: with
 #'  \code{p_init_translon = 0.3}, 0.8 lowers the held-out RMSE (logit) to 0.93 and moves the uoORF effect (logit
 #'  slope) from -0.65 to -1.01 (real -1.15).
+#' @param translon_exempt genes that keep the start-codon table (\code{p_init}) for their leader translons although
+#'  \code{p_init_translon} is set (no per-gene factor either). Default \code{"auto"}: when a condition changes
+#'  \code{reinit_distance} (an ISR-type scenario), every gene with the delayed-reinitiation layout (a translated uORF
+#'  followed by a uoORF that overlaps the CDS start: ATF4 / ATF5 / PPP1R15A-like) is exempt, so its CDS keeps the
+#'  strong reinitiation response; genes with only a uORF (or only a uoORF) keep \code{p_init_translon}. Otherwise no
+#'  gene is exempt. Also NULL (none), a character vector of transcript ids, or a function
+#'  \code{function(gene, classes, ends, L)} returning TRUE for an exempt gene (classes / ends of its translated
+#'  features, L = leader length). \code{simRDGflow()} stores the exempt genes in \code{metadata(result)$rdg_translon_exempt}.
 #' @param conditions named list: per condition (as in the count table's
 #'  \code{condition} column) a list of parameters that replace the defaults, or
 #'  \code{p_init_scale}, a factor on all initiation probabilities. Default none:
@@ -66,7 +74,7 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                            reinit_after_cds = 0.05, p_frameshift = 0.05,
                            p_readthrough = 0.02,
                            p_init_translon = 0.3, translon_classes = c("uORF", "uoORF", "NTE"),
-                           translon_gene_sd = 0, uoorf_cds_factor = 0.8,
+                           translon_gene_sd = 0, uoorf_cds_factor = 0.8, translon_exempt = "auto",
                            conditions = list()) {
   params <- list(p_init = p_init, p_init_other = p_init_other, reinit_max = reinit_max,
                  reinit_scale_codons = reinit_scale_codons,
@@ -74,7 +82,7 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                  p_frameshift = p_frameshift, p_readthrough = p_readthrough,
                  p_init_translon = p_init_translon,
                  translon_classes = translon_classes, translon_gene_sd = translon_gene_sd, uoorf_cds_factor = uoorf_cds_factor,
-                 p_init_scale = 1, conditions = conditions)
+                 translon_exempt = translon_exempt, p_init_scale = 1, conditions = conditions)
   probs <- c(p_init, p_init_other, reinit_max, reinit_after_cds, p_frameshift, p_readthrough,
              p_init_translon)
   if (any(!is.finite(probs) | probs < 0 | probs > 1))
@@ -85,6 +93,8 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
     stop("translon_gene_sd must be one number >= 0")
   if (length(uoorf_cds_factor) != 1L || !is.finite(uoorf_cds_factor) || uoorf_cds_factor <= 0 || uoorf_cds_factor > 1)
     stop("uoorf_cds_factor must be one number in (0, 1]")
+  if (!(is.null(translon_exempt) || is.function(translon_exempt) || is.character(translon_exempt)))
+    stop("translon_exempt must be \"auto\", NULL, transcript ids or a function")
   if (reinit_scale_codons <= 0 || reinit_distance < 0)
     stop("reinit_scale_codons must be > 0 and reinit_distance >= 0")
   structure(params, class = "rdg_parameters")
@@ -98,19 +108,40 @@ rdg_condition_parameters <- function(params, condition) {
   params
 }
 
+# Does any condition change reinit_distance (an ISR-type scenario)?
+rdg_reinit_regulated <- function(params) {
+  any(vapply(params$conditions, function(o) !is.null(o$reinit_distance) &&
+               !isTRUE(all.equal(o$reinit_distance, params$reinit_distance)), logical(1)))
+}
+
+# Which genes keep the start-codon table for their leader translons (translon_exempt)? classes / ends: one vector
+# per gene (translated features), L: leader length per gene. Returns a named logical vector.
+rdg_translon_exempt <- function(params, genes, classes, ends, L) {
+  ex <- params$translon_exempt
+  none <- setNames(rep(FALSE, length(genes)), genes)
+  if (is.null(ex) || is.null(params$p_init_translon) || !length(genes)) return(none)
+  out <- if (is.function(ex)) {
+    vapply(seq_along(genes), function(i) isTRUE(ex(genes[[i]], classes[[i]], ends[[i]], L[[i]])), logical(1))
+  } else if (identical(ex, "auto")) {
+    rdg_reinit_regulated(params) & vapply(classes, function(cl) any(cl == "uORF") && any(cl == "uoORF"), logical(1))
+  } else genes %in% ex
+  setNames(out, genes)
+}
+
 # Ribosome load of the CDS and each translated feature of one transcript.
 # starts/ends/classes/start_codons describe the translated extra features
 # (transcript coordinates); L = leader length, C = CDS end (last stop base).
 # gene_factor: the gene's factor on the initiation probabilities of its extra features (translon_gene_sd).
+# exempt: TRUE keeps the start-codon table for the gene's translons (translon_exempt), ignoring p_init_translon and gene_factor.
 rdg_gene_loads <- function(starts, ends, classes, start_codons, L, C, params,
-                           cds_start_codon = "ATG", efficiency = NULL, gene_factor = 1) {
+                           cds_start_codon = "ATG", efficiency = NULL, gene_factor = 1, exempt = FALSE) {
   # Frameshift segments and readthrough extensions are fed by ribosomes that
   # elongate the CDS, not by scanning: handled after the scanning pass.
   continued <- classes %in% c("FS", "CTE")
   if (any(continued)) {
     inner <- rdg_gene_loads(starts[!continued], ends[!continued], classes[!continued],
                             start_codons[!continued], L, C, params, cds_start_codon,
-                            gene_factor = gene_factor)
+                            gene_factor = gene_factor, exempt = exempt)
     eff <- if (is.null(efficiency)) rep(NA_real_, length(starts)) else efficiency
     default <- ifelse(classes == "FS", params$p_frameshift, params$p_readthrough)
     eff <- ifelse(is.na(eff), default, eff)
@@ -133,8 +164,10 @@ rdg_gene_loads <- function(starts, ends, classes, start_codons, L, C, params,
   p[is.na(p)] <- params$p_init_other
   # One initiation probability for the translon_classes features (position 1 is the CDS), and the per-gene factor.
   sel <- c(FALSE, classes %in% (if (is.null(params$translon_classes)) c("uORF", "uoORF", "NTE") else params$translon_classes))
-  if (!is.null(params$p_init_translon)) p[sel] <- params$p_init_translon
-  if (gene_factor != 1) p[sel] <- pmin(1, p[sel] * gene_factor)
+  if (!exempt) {
+    if (!is.null(params$p_init_translon)) p[sel] <- params$p_init_translon
+    if (gene_factor != 1) p[sel] <- pmin(1, p[sel] * gene_factor)
+  }
   p <- pmin(1, p * params$p_init_scale)
   len <- e - s + 1L
   # Reinitiation after an ORF depends on its length; the CDS uses its own value.
@@ -218,6 +251,9 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
   sd_g <- if (is.null(params$translon_gene_sd)) 0 else params$translon_gene_sd
   if (sd_g > 0 && length(by_gene))
     gene_factor[] <- exp(stats::rnorm(length(by_gene), -sd_g^2 / 2, sd_g))
+  # Genes that keep the start-codon table (translon_exempt; default: reinitiation-type genes in ISR-type scenarios).
+  exempt <- rdg_translon_exempt(params, names(by_gene), lapply(by_gene, function(r) features$class[r]),
+                                lapply(by_gene, function(r) features$tx_end[r]), L[names(by_gene)])
   for (cond in unique(condition)) {
     p <- rdg_condition_parameters(params, cond)
     libs <- which(condition == cond)
@@ -226,7 +262,7 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
       rdg_gene_loads(features$tx_start[rows], features$tx_end[rows], features$class[rows],
                      features$start_codon[rows], L[[g]], C[[g]], p, cds_codon[[g]],
                      efficiency = if ("efficiency" %in% names(features)) features$efficiency[rows],
-                     gene_factor = gene_factor[[g]])
+                     gene_factor = gene_factor[[g]], exempt = exempt[[g]])
     })
     names(gene_load) <- names(by_gene)
     for (g in names(by_gene)) {
@@ -255,6 +291,7 @@ simRDGflow <- function(count_table_regions, simGenome, params = rdg_parameters()
   S4Vectors::metadata(count_table_regions)$rdg_feature_share <- share
   S4Vectors::metadata(count_table_regions)$rdg_parameters <- params
   if (sd_g > 0) S4Vectors::metadata(count_table_regions)$rdg_gene_factor <- gene_factor
+  if (any(exempt)) S4Vectors::metadata(count_table_regions)$rdg_translon_exempt <- names(exempt)[exempt]
   count_table_regions
 }
 

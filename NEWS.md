@@ -1,5 +1,14 @@
 # coverageSim (development version)
 
+* `rdg_parameters(translon_exempt = "auto")`: genes that keep the start-codon table for
+  their leader translons although `p_init_translon` is set. "auto" (default): when a
+  condition changes `reinit_distance` (ISR-type scenario), genes with the
+  delayed-reinitiation layout (a translated uORF followed by a uoORF over the CDS start:
+  ATF4 / ATF5 / PPP1R15A-like) are exempt, so the ATF4-like CDS gain under ISR stays
+  3.7x (1.1x without the exemption); genes with only a uORF keep the fitted 0.3.
+  Without such a scenario no gene is exempt and results are unchanged. Also NULL, transcript ids or a function; `simRDGflow()` records
+  the exempt genes in `metadata(result)$rdg_translon_exempt`.
+
 * `rdg_parameters()`: new defaults for the uORF -> CDS coupling (a deliberate realism
   change; every `simRDGflow()` result changes). Fitted on 62 human marker genes with
   Ribo-seq-detected uORFs (clean-CDS usage, 5-fold cross-validation by gene, held-out
