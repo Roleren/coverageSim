@@ -843,10 +843,24 @@ fragment_candidates <- function(signal_table, transcript_models, candidates,
 # receive its reads; they are left out and listed in the "dropped_reads"
 # attribute of the result.
 allocate_fragment_candidates <- function(candidates, signal_table, joint) {
-  # `labels` is the ground-truth region of each position (e.g. "uorf:3");
-  # `groups` decides what is drawn together. They differ when drawing per
-  # position: the draw then uses the row, but every fragment must still carry
-  # its region label, or reads cannot be attributed to their feature.
+  draw <- fragment_draw_budgets(signal_table, joint)
+  present <- unique(draw$group_id[candidates$signal_row])
+  dropped <- fragment_dropped_reads(draw$budgets, present)
+  candidates <- draw_fragment_groups(candidates, signal_table, draw)
+  data.table::setattr(candidates, "dropped_reads", dropped)
+  candidates
+}
+
+# The read budget of each draw group (allocate_fragment_candidates()).
+#
+# `labels` is the ground-truth region of each position (e.g. "uorf:3");
+# `groups` decides what is drawn together. They differ when drawing per
+# position: the draw then uses the row, but every fragment must still carry
+# its region label, or reads cannot be attributed to their feature. Groups are
+# handled as integer ids of the signal rows (`group_id`): the candidate table
+# has tens of millions of rows, and matching or grouping it by character labels
+# cost far more than the draws themselves.
+fragment_draw_budgets <- function(signal_table, joint) {
   labels <- fragment_sampling_groups(signal_table)
   groups <- if (joint) labels else seq_len(nrow(signal_table))
   # The read budget of each group, from all of its positions.
@@ -870,17 +884,22 @@ allocate_fragment_candidates <- function(candidates, signal_table, joint) {
       any(budgets$total != floor(budgets$total))) {
     stop("Invalid fragment sampling budget")
   }
-  # Groups are handled as integer ids of the signal rows: the candidate table
-  # has tens of millions of rows, and matching or grouping it by character
-  # labels cost far more than the draws themselves.
-  group_id <- match(groups, budgets$draw_group)
-  present <- unique(group_id[candidates$signal_row])
-  dropped <- budgets[total > 0 & !seq_len(.N) %in% present,
-                     .(reads = as.numeric(sum(total))),
-                     by = .(sampling_group = as.character(sampling_group),
-                            transcript_id = as.character(transcript_id))]
+  list(labels = labels, budgets = budgets,
+       group_id = match(groups, budgets$draw_group))
+}
 
-  candidates[, sampling_group := labels[signal_row]]
+# Groups with a budget but no candidate (ids not in `present`) lose their reads.
+fragment_dropped_reads <- function(budgets, present) {
+  budgets[total > 0 & !seq_len(.N) %in% present,
+          .(reads = as.numeric(sum(total))),
+          by = .(sampling_group = as.character(sampling_group),
+                 transcript_id = as.character(transcript_id))]
+}
+
+# The draw of allocate_fragment_candidates() for candidates that hold complete
+# draw groups; `draw` comes from fragment_draw_budgets().
+draw_fragment_groups <- function(candidates, signal_table, draw) {
+  candidates[, sampling_group := draw$labels[signal_row]]
   candidates[, probability := geometry_probability * bias_weight *
                signal_table$score[signal_row]]
   if (any(!is.finite(candidates$probability))) {
@@ -890,30 +909,81 @@ allocate_fragment_candidates <- function(candidates, signal_table, joint) {
   # empty instead of reaching the draw with no budget.
   if (!nrow(candidates)) {
     candidates[, score := integer(0)]
-  } else {
-    # One multinomial draw per group, in the order in which the groups first
-    # appear in the candidate table (the order data.table's `by` used, so the
-    # random draws and every number are unchanged).
-    candidate_group <- group_id[candidates$signal_row]
-    group_rank <- match(candidate_group, unique(candidate_group))
-    rows <- split(seq_along(group_rank), group_rank)
-    probability <- candidates$probability
-    score <- integer(length(probability))
-    for (k in seq_along(rows)) {
-      idx <- rows[[k]]
-      w <- probability[idx]
-      if (sum(w) <= 0) stop("End-bias weights exclude every feasible fragment")
-      w <- w / max(w)
-      p <- w / sum(w)
-      probability[idx] <- p
-      score[idx] <- as.integer(stats::rmultinom(
-        1L, budgets$total[candidate_group[idx[1L]]], p))
-    }
-    data.table::set(candidates, j = "probability", value = probability)
-    data.table::set(candidates, j = "score", value = score)
+    return(candidates)
   }
-  data.table::setattr(candidates, "dropped_reads", dropped)
+  # One multinomial draw per group, in the order in which the groups first
+  # appear in the candidate table (the order data.table's `by` used, so the
+  # random draws and every number are unchanged).
+  candidate_group <- draw$group_id[candidates$signal_row]
+  group_rank <- match(candidate_group, unique(candidate_group))
+  rows <- split(seq_along(group_rank), group_rank)
+  probability <- candidates$probability
+  score <- integer(length(probability))
+  total <- draw$budgets$total
+  for (k in seq_along(rows)) {
+    idx <- rows[[k]]
+    w <- probability[idx]
+    if (sum(w) <= 0) stop("End-bias weights exclude every feasible fragment")
+    w <- w / max(w)
+    p <- w / sum(w)
+    probability[idx] <- p
+    score[idx] <- as.integer(stats::rmultinom(
+      1L, total[candidate_group[idx[1L]]], p))
+  }
+  data.table::set(candidates, j = "probability", value = probability)
+  data.table::set(candidates, j = "score", value = score)
   candidates
+}
+
+# Chunks of signal rows (positions of `group_id`) that hold whole draw groups,
+# each with about `target` rows. A cut after row r is allowed only when every
+# group seen so far ends at or before r; then the groups of later chunks all
+# first appear after those of earlier chunks, and drawing chunk by chunk uses
+# the groups in the same order as one draw over all candidates.
+fragment_row_chunks <- function(group_id, target) {
+  n <- length(group_id)
+  if (!n) return(list())
+  last <- integer(max(group_id))
+  last[group_id] <- seq_len(n)
+  cut_ok <- which(cummax(last[group_id]) == seq_len(n))
+  chunks <- list()
+  start <- 1L
+  while (start <= n) {
+    want <- min(start + max(1L, as.integer(min(target, n))) - 1L, n)
+    end <- cut_ok[findInterval(want - 1, cut_ok) + 1L]
+    chunks[[length(chunks) + 1L]] <- start:end
+    start <- end + 1L
+  }
+  chunks
+}
+
+# Transcript coordinate, transcript length and model presence of each signal
+# position (as in fragment_candidates()), and whether any length-and-offset
+# pair of `candidates` fits there.
+fragment_signal_fits <- function(signal_table, transcript_models, candidates) {
+  transcript_id <- signal_table$transcript_id
+  used_ids <- unique(transcript_id)
+  used_models <- lapply(used_ids, function(id) transcript_models[[id]])
+  model_index <- match(transcript_id, used_ids)
+  has_model <- !vapply(used_models, is.null, logical(1))[model_index]
+  site_tx <- rep(NA_integer_, nrow(signal_table))
+  rows_per_model <- split(seq_len(nrow(signal_table)), model_index)
+  for (k in as.integer(names(rows_per_model))) {
+    if (is.null(used_models[[k]])) next
+    rows <- rows_per_model[[as.character(k)]]
+    site_tx[rows] <- genomic_sites_to_transcript(used_models[[k]],
+                                                 signal_table$signal_position[rows])
+  }
+  tx_length <- vapply(used_models, function(model) {
+    if (is.null(model)) NA_real_ else as.numeric(model$length)
+  }, numeric(1))[model_index]
+  fits <- logical(nrow(signal_table))
+  for (k in seq_len(nrow(candidates))) {
+    tx_start <- site_tx - candidates$site_offset[k]
+    fits <- fits | (!is.na(tx_start) & tx_start >= 1L &
+                      tx_start + candidates$fragment_length[k] - 1L <= tx_length)
+  }
+  list(has_model = has_model, site_tx = site_tx, fits = fits)
 }
 
 # The groups whose read budgets are kept: the region of a transcript when the
@@ -1145,6 +1215,15 @@ make_simulated_rpf_fragments <- function(signal_table, transcript_models,
     count_column <- if ("read_count" %in% names(signal_table)) "read_count" else "score"
     build_rows <- which(signal_table[[count_column]] > 0)
   }
+  chunk_rows <- fragment_chunk_option()
+  if (length(build_rows) && is.finite(chunk_rows)) {
+    allocated <- allocate_fragments_in_chunks(signal_table, transcript_models,
+                                              candidates, geometry, joint,
+                                              build_rows, chunk_rows)
+    return(finish_simulated_rpf_fragments(allocated$allocated, allocated$dropped,
+                                          allocated$signal_table,
+                                          transcript_models, geometry))
+  }
   if (length(build_rows) == nrow(signal_table)) {
     candidate_table <- fragment_candidates(
       signal_table, transcript_models, candidates, geometry
@@ -1167,6 +1246,73 @@ make_simulated_rpf_fragments <- function(signal_table, transcript_models,
   if (joint) dropped <- attr(allocated, "dropped_reads")
   finish_simulated_rpf_fragments(allocated, dropped, signal_table,
                                  transcript_models, geometry)
+}
+
+# Candidate rows built at a time by make_simulated_rpf_fragments():
+# options(coverageSim.fragment_chunk_rows), default 2e6; Inf builds all
+# candidates at once (the previous behaviour; same results, more memory).
+fragment_chunk_option <- function() {
+  rows <- getOption("coverageSim.fragment_chunk_rows", 2e6)
+  if (!is.numeric(rows) || length(rows) != 1L || is.na(rows) || rows < 1) {
+    stop("options(coverageSim.fragment_chunk_rows) must be a number >= 1 (or Inf)")
+  }
+  rows
+}
+
+# The joint or per-position draw of make_simulated_rpf_fragments(), built and
+# drawn in chunks of whole draw groups instead of one candidate table for all
+# positions (often 100+ million rows). Each chunk's candidates are built, drawn,
+# and reduced to the drawn ones before the next chunk. The candidates, the
+# groups, their order and the random draws are those of one table for all
+# positions, so the fragments are identical; the drawn rows come in the same
+# order (signal row, then candidate order).
+allocate_fragments_in_chunks <- function(signal_table, transcript_models,
+                                         candidates, geometry, joint,
+                                         build_rows, chunk_rows) {
+  # Positions that fragment_candidates() would refuse are found before any
+  # random draw, and refused with its message (first such position).
+  fits <- fragment_signal_fits(signal_table[build_rows], transcript_models,
+                               candidates)
+  problem <- which(!fits$has_model | is.na(fits$site_tx) |
+                     (!fits$fits & geometry$boundary_action == "error"))
+  if (length(problem)) {
+    fragment_candidates(signal_table[build_rows[problem[1L]]], transcript_models,
+                        candidates, geometry)
+    stop("Cannot create fragment candidates for signal row ", build_rows[problem[1L]])
+  }
+  candidate_signal_table <- signal_table
+  dropped <- NULL
+  if (!joint) {
+    placeable <- logical(nrow(signal_table))
+    placeable[build_rows] <- fits$fits
+    moved <- move_unplaceable_reads(signal_table, placeable)
+    signal_table <- moved$signal_table
+    dropped <- moved$dropped
+  }
+  draw <- fragment_draw_budgets(signal_table, joint)
+  # Chunks over the positions that have room; the others have no candidates.
+  rows_with_room <- build_rows[fits$fits]
+  target <- max(1, floor(chunk_rows / max(1L, nrow(candidates))))
+  chunks <- fragment_row_chunks(draw$group_id[rows_with_room], target)
+  present <- logical(nrow(draw$budgets))
+  kept <- vector("list", max(1L, length(chunks)))
+  for (k in seq_along(chunks)) {
+    rows <- rows_with_room[chunks[[k]]]
+    table <- fragment_candidates(candidate_signal_table[rows], transcript_models,
+                                 candidates, geometry)
+    table[, signal_row := rows[signal_row]]
+    present[draw$group_id[rows]] <- TRUE
+    table <- draw_fragment_groups(table, signal_table, draw)
+    kept[[k]] <- table[score > 0L]
+  }
+  if (!length(chunks)) {
+    empty <- fragment_candidates(candidate_signal_table[0L], transcript_models,
+                                 candidates, geometry)
+    kept[[1L]] <- draw_fragment_groups(empty, signal_table, draw)
+  }
+  allocated <- data.table::rbindlist(kept)
+  if (joint) dropped <- fragment_dropped_reads(draw$budgets, which(present))
+  list(allocated = allocated, dropped = dropped, signal_table = signal_table)
 }
 
 # Drawn candidates -> fragment table with genome coordinates (the second half of
