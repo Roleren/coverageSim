@@ -18,7 +18,8 @@ rdg_parameters(
   translon_gene_sd = 0,
   uoorf_cds_factor = 0.8,
   translon_exempt = "auto",
-  conditions = list()
+  conditions = list(),
+  reinit_d0 = NULL
 )
 }
 \arguments{
@@ -83,6 +84,14 @@ features, L = leader length). \code{simRDGflow()} stores the exempt genes in \co
 \code{p_init_scale}, a factor on all initiation probabilities. Default none:
 every condition uses the defaults. Example for an integrated stress response
 condition: \code{list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))}.}
+
+\item{reinit_d0}{NULL (default) or one number > 0, in nt: graded ternary-complex re-acquisition. NULL keeps the hard
+step: every reinitiating ribosome can initiate again at the first start at least \code{reinit_distance} nt past the
+stop. With a number, reinitiating ribosomes regain an initiator ternary complex gradually while they scan: of those
+still unloaded, the fraction \code{1 - exp(-x / reinit_d0)} is loaded after a further \code{x} nt beyond
+\code{reinit_distance}, so the share reaching a start at distance \code{d} past the stop is
+\code{1 - exp(-(d - reinit_distance) / reinit_d0)}. Unloaded ribosomes scan past a start without initiating; ribosomes
+still unloaded after the last start are lost. Not fitted: see Details.}
 }
 \value{
 a list of class "rdg_parameters"
@@ -90,6 +99,20 @@ a list of class "rdg_parameters"
 \description{
 Parameters of the ribosome flow model
 }
+\details{
+\strong{Graded reinitiation (\code{reinit_d0}).} In the genome-wide human translon panel (claude-megafst master
+ classifier v4.3w; 691 genes with exactly one translated uORF and no uoORF, uORF reads without initiation-arrest
+ libraries, uORF-to-CDS distance >= 45 nt), CDS density relative to uORF reads rose by +0.33 log2 per doubling of the
+ intercistronic distance (se 0.12; adjusted for uORF cap distance, uORF length, start codon, tier, CDS length and number
+ of starts), a graded rise that the hard step at \code{reinit_distance} cannot produce. Caveat: the estimate is
+ confounded with leader length (leader length = cap distance + uORF length + distance, so the three cannot be separated:
+ with leader length in the model the slope is +0.18, se 0.38), it weakens to +0.18 when the classifier probability P is
+ added, and it is correlational. It supports the direction, not a value for \code{reinit_d0}; with the default
+ \code{p_init_translon = 0.3} and \code{reinit_max = 0.6} the whole reinitiation route moves at most ~0.3 log2, so a
+ slope of this size also needs stronger uORF initiation or reinitiation. Fit scripts and results (carina-claude,
+ 2026-11-26): \file{~/open_workspace/carina-claude/uorf_coupling/08_distance_clean.R} (README.md there, step 8).
+}
 \examples{
 rdg_parameters(conditions = list(ISR = list(reinit_distance = 150)))
+rdg_parameters(reinit_distance = 0, reinit_d0 = 100)   # graded reload
 }

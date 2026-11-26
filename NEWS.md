@@ -1,5 +1,17 @@
 # coverageSim (development version)
 
+* `rdg_parameters(reinit_d0 = )` (opt-in, default NULL = the hard step, results
+  unchanged): graded ternary-complex re-acquisition after a uORF. Reinitiating
+  ribosomes load gradually while they scan, so the share reaching a start d nt past
+  the stop is `1 - exp(-(d - reinit_distance) / reinit_d0)`; unloaded ones scan past
+  starts without initiating. Motivation: in the genome-wide human translon panel
+  (691 single-uORF genes) CDS density relative to uORF reads rises +0.33 log2 per
+  doubling of the uORF-to-CDS distance (se 0.12), a graded rise the step cannot
+  give. Caveat: confounded with leader length (not separable from cap distance +
+  uORF length + distance), weaker with the classifier P (+0.18), correlational; it
+  supports the shape, not a value, so `reinit_d0` is not fitted. A condition that
+  changes `reinit_d0` counts as ISR-type for `translon_exempt = "auto"`.
+
 * `rdg_parameters(translon_exempt = "auto")`: genes that keep the start-codon table for
   their leader translons although `p_init_translon` is set. "auto" (default): when a
   condition changes `reinit_distance` (ISR-type scenario), genes with the

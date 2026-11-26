@@ -6,7 +6,8 @@
 # scanning). Ribosomes that finish a short ORF can resume scanning
 # (reinitiation; less likely after longer ORFs) but can only initiate again
 # after re-acquiring an initiator ternary complex, modelled as a minimum
-# distance downstream of the stop. A small fraction reinitiates after the CDS.
+# distance downstream of the stop (optionally followed by a graded reload,
+# reinit_d0). A small fraction reinitiates after the CDS.
 # A feature's ribosome load is its initiations times its length; loads set how
 # a gene's translated reads are split between the CDS and its translons.
 # Conditions change the parameters per library (e.g. the integrated stress
@@ -23,6 +24,13 @@
 #'  \code{k} codons is \code{reinit_max * exp(-k / reinit_scale_codons)}.
 #' @param reinit_distance nt after a stop codon before reinitiating ribosomes
 #'  can initiate again (ternary complex re-acquisition).
+#' @param reinit_d0 NULL (default) or one number > 0, in nt: graded ternary-complex re-acquisition. NULL keeps the hard
+#'  step: every reinitiating ribosome can initiate again at the first start at least \code{reinit_distance} nt past the
+#'  stop. With a number, reinitiating ribosomes regain an initiator ternary complex gradually while they scan: of those
+#'  still unloaded, the fraction \code{1 - exp(-x / reinit_d0)} is loaded after a further \code{x} nt beyond
+#'  \code{reinit_distance}, so the share reaching a start at distance \code{d} past the stop is
+#'  \code{1 - exp(-(d - reinit_distance) / reinit_d0)}. Unloaded ribosomes scan past a start without initiating; ribosomes
+#'  still unloaded after the last start are lost. Not fitted: see Details.
 #' @param reinit_after_cds reinitiation probability after the CDS stop.
 #' @param p_frameshift default fraction of CDS ribosomes that shift frame at an
 #'  "FS" feature (a feature's own \code{efficiency} overrides it).
@@ -63,10 +71,23 @@
 #'  \code{p_init_scale}, a factor on all initiation probabilities. Default none:
 #'  every condition uses the defaults. Example for an integrated stress response
 #'  condition: \code{list(ISR = list(reinit_distance = 150, p_init_scale = 0.8))}.
+#' @details
+#' \strong{Graded reinitiation (\code{reinit_d0}).} In the genome-wide human translon panel (claude-megafst master
+#'  classifier v4.3w; 691 genes with exactly one translated uORF and no uoORF, uORF reads without initiation-arrest
+#'  libraries, uORF-to-CDS distance >= 45 nt), CDS density relative to uORF reads rose by +0.33 log2 per doubling of the
+#'  intercistronic distance (se 0.12; adjusted for uORF cap distance, uORF length, start codon, tier, CDS length and number
+#'  of starts), a graded rise that the hard step at \code{reinit_distance} cannot produce. Caveat: the estimate is
+#'  confounded with leader length (leader length = cap distance + uORF length + distance, so the three cannot be separated:
+#'  with leader length in the model the slope is +0.18, se 0.38), it weakens to +0.18 when the classifier probability P is
+#'  added, and it is correlational. It supports the direction, not a value for \code{reinit_d0}; with the default
+#'  \code{p_init_translon = 0.3} and \code{reinit_max = 0.6} the whole reinitiation route moves at most ~0.3 log2, so a
+#'  slope of this size also needs stronger uORF initiation or reinitiation. Fit scripts and results (carina-claude,
+#'  2026-11-26): \file{~/open_workspace/carina-claude/uorf_coupling/08_distance_clean.R} (README.md there, step 8).
 #' @return a list of class "rdg_parameters"
 #' @export
 #' @examples
 #' rdg_parameters(conditions = list(ISR = list(reinit_distance = 150)))
+#' rdg_parameters(reinit_distance = 0, reinit_d0 = 100)   # graded reload
 rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0.05,
                                       ACG = 0.04),
                            p_init_other = 0.02, reinit_max = 0.6,
@@ -75,10 +96,10 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
                            p_readthrough = 0.02,
                            p_init_translon = 0.3, translon_classes = c("uORF", "uoORF", "NTE"),
                            translon_gene_sd = 0, uoorf_cds_factor = 0.8, translon_exempt = "auto",
-                           conditions = list()) {
+                           conditions = list(), reinit_d0 = NULL) {
   params <- list(p_init = p_init, p_init_other = p_init_other, reinit_max = reinit_max,
                  reinit_scale_codons = reinit_scale_codons,
-                 reinit_distance = reinit_distance, reinit_after_cds = reinit_after_cds,
+                 reinit_distance = reinit_distance, reinit_d0 = reinit_d0, reinit_after_cds = reinit_after_cds,
                  p_frameshift = p_frameshift, p_readthrough = p_readthrough,
                  p_init_translon = p_init_translon,
                  translon_classes = translon_classes, translon_gene_sd = translon_gene_sd, uoorf_cds_factor = uoorf_cds_factor,
@@ -97,7 +118,14 @@ rdg_parameters <- function(p_init = c(ATG = 0.8, CTG = 0.12, GTG = 0.07, TTG = 0
     stop("translon_exempt must be \"auto\", NULL, transcript ids or a function")
   if (reinit_scale_codons <= 0 || reinit_distance < 0)
     stop("reinit_scale_codons must be > 0 and reinit_distance >= 0")
+  rdg_check_reinit_d0(reinit_d0)
+  for (o in conditions) if ("reinit_d0" %in% names(o)) rdg_check_reinit_d0(o$reinit_d0)
   structure(params, class = "rdg_parameters")
+}
+
+rdg_check_reinit_d0 <- function(x) {
+  if (!is.null(x) && (!is.numeric(x) || length(x) != 1L || !is.finite(x) || x <= 0))
+    stop("reinit_d0 must be NULL or one number > 0")
 }
 
 # Parameters for one condition.
@@ -108,10 +136,15 @@ rdg_condition_parameters <- function(params, condition) {
   params
 }
 
-# Does any condition change reinit_distance (an ISR-type scenario)?
+# Does any condition change reinit_distance or reinit_d0 (an ISR-type scenario)?
 rdg_reinit_regulated <- function(params) {
-  any(vapply(params$conditions, function(o) !is.null(o$reinit_distance) &&
-               !isTRUE(all.equal(o$reinit_distance, params$reinit_distance)), logical(1)))
+  any(vapply(params$conditions, function(o) (!is.null(o$reinit_distance) &&
+               !isTRUE(all.equal(o$reinit_distance, params$reinit_distance))) ||
+               ("reinit_d0" %in% names(o) && !rdg_same_d0(o$reinit_d0, params$reinit_d0)), logical(1)))
+}
+rdg_same_d0 <- function(a, b) {
+  if (is.null(a) || is.null(b)) return(is.null(a) && is.null(b))
+  isTRUE(all.equal(as.numeric(a), as.numeric(b)))
 }
 
 # Which genes keep the start-codon table for their leader translons (translon_exempt)? classes / ends: one vector
@@ -178,11 +211,21 @@ rdg_gene_loads <- function(starts, ends, classes, start_codons, L, C, params,
   initiations <- numeric(length(s))
   scanning <- 1
   pending_pos <- numeric(0); pending_amount <- numeric(0)
+  d0 <- params$reinit_d0
   for (i in order_by_start) {
     joined <- pending_pos <= s[i]
     if (any(joined)) {
-      scanning <- scanning + sum(pending_amount[joined])
-      pending_pos <- pending_pos[!joined]; pending_amount <- pending_amount[!joined]
+      if (is.null(d0)) {
+        scanning <- scanning + sum(pending_amount[joined])
+        pending_pos <- pending_pos[!joined]; pending_amount <- pending_amount[!joined]
+      } else {
+        # Graded reload: of the still unloaded ribosomes, 1 - exp(-x / d0) load over the next x nt (memoryless), so
+        # the loaded share at distance d past the stop is 1 - exp(-(d - reinit_distance) / d0).
+        load_now <- pending_amount[joined] * -expm1(-(s[i] - pending_pos[joined]) / d0)
+        scanning <- scanning + sum(load_now)
+        pending_amount[joined] <- pending_amount[joined] - load_now
+        pending_pos[joined] <- s[i]
+      }
     }
     ini <- p[i] * scanning
     initiations[i] <- ini
