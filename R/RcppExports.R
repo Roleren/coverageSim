@@ -9,6 +9,10 @@ write_feature_sequences_cpp <- function(tx, leader, cds_length, gene, start, end
     .Call(`_coverageSim_write_feature_sequences_cpp`, tx, leader, cds_length, gene, start, end, classes, starts, has_start, chosen_stops, stop_codons, max_rounds)
 }
 
+raw_read_records_cpp <- function(reads, ids, read_length, profile, error_rate, insert_start, insert_end) {
+    .Call(`_coverageSim_raw_read_records_cpp`, reads, ids, read_length, profile, error_rate, insert_start, insert_end)
+}
+
 feature_stop_positions <- function(bases, positions, stop_codons) {
     .Call(`_coverageSim_feature_stop_positions`, bases, positions, stop_codons)
 }

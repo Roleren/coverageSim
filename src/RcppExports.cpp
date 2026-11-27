@@ -45,6 +45,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// raw_read_records_cpp
+Rcpp::List raw_read_records_cpp(Rcpp::CharacterVector reads, Rcpp::CharacterVector ids, int read_length, int profile, double error_rate, Rcpp::IntegerVector insert_start, Rcpp::IntegerVector insert_end);
+RcppExport SEXP _coverageSim_raw_read_records_cpp(SEXP readsSEXP, SEXP idsSEXP, SEXP read_lengthSEXP, SEXP profileSEXP, SEXP error_rateSEXP, SEXP insert_startSEXP, SEXP insert_endSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type reads(readsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type ids(idsSEXP);
+    Rcpp::traits::input_parameter< int >::type read_length(read_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type profile(profileSEXP);
+    Rcpp::traits::input_parameter< double >::type error_rate(error_rateSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type insert_start(insert_startSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type insert_end(insert_endSEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_read_records_cpp(reads, ids, read_length, profile, error_rate, insert_start, insert_end));
+    return rcpp_result_gen;
+END_RCPP
+}
 // feature_stop_positions
 Rcpp::IntegerVector feature_stop_positions(Rcpp::CharacterVector bases, Rcpp::IntegerVector positions, Rcpp::CharacterVector stop_codons);
 RcppExport SEXP _coverageSim_feature_stop_positions(SEXP basesSEXP, SEXP positionsSEXP, SEXP stop_codonsSEXP) {
@@ -62,6 +79,7 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_coverageSim_sample_uniform_regions_cpp", (DL_FUNC) &_coverageSim_sample_uniform_regions_cpp, 3},
     {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 12},
+    {"_coverageSim_raw_read_records_cpp", (DL_FUNC) &_coverageSim_raw_read_records_cpp, 7},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}
 };

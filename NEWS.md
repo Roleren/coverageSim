@@ -1,5 +1,14 @@
 # coverageSim (development version)
 
+* `simulate_raw_reads()`: raw FASTQ with a per-read truth table from footprints
+  (drawn from sequences, given as a table, or a coverageSim library as genomic
+  ranges). Adds 5' / 3' UMIs and fixed barcodes, untemplated bases, poly(A) tail,
+  linker and adapter, cuts to the read length, with Illumina-like qualities and
+  errors, adapter dimers, contaminants and a second organism; optional read 2.
+  `raw_read_protocol()` has presets (Ingolia 2012, McGlincy & Ingolia 2017,
+  NEXTflex and TruSeq small RNA, TruSeq, SMARTer, OTTR, poly(A)/CATS, RiboLace)
+  and custom layouts; `raw_read_trim_settings()` gives the trimming that undoes
+  one. Example: analysis/workflows/simulate_raw_reads_example.R.
 * `simulation_preset()` / `run_simulation_preset()`: clean / realistic / noisy
   difficulty presets, plus `codon_bias_preset("clean")` and `"noisy"`; validation
   in docs/PRESETS.md. `rdg_parameters(scan_coupling = 1)`: 0 decouples uORF
