@@ -9,8 +9,48 @@ write_feature_sequences_cpp <- function(tx, leader, cds_length, gene, start, end
     .Call(`_coverageSim_write_feature_sequences_cpp`, tx, leader, cds_length, gene, start, end, classes, starts, has_start, chosen_stops, stop_codons, max_rounds)
 }
 
-raw_read_records_cpp <- function(reads, ids, read_length, profile, error_rate, insert_start, insert_end) {
-    .Call(`_coverageSim_raw_read_records_cpp`, reads, ids, read_length, profile, error_rate, insert_start, insert_end)
+raw_open_writer_cpp <- function(path, gzip, threads) {
+    .Call(`_coverageSim_raw_open_writer_cpp`, path, gzip, threads)
+}
+
+raw_write_fastq_cpp <- function(writer, buffer_ptr) {
+    invisible(.Call(`_coverageSim_raw_write_fastq_cpp`, writer, buffer_ptr))
+}
+
+raw_close_writer_cpp <- function(writer) {
+    invisible(.Call(`_coverageSim_raw_close_writer_cpp`, writer))
+}
+
+raw_write_truth_cpp <- function(writer, columns, id_prefix, id_width, first, n, separator, logical01) {
+    invisible(.Call(`_coverageSim_raw_write_truth_cpp`, writer, columns, id_prefix, id_width, first, n, separator, logical01))
+}
+
+raw_read_model_cpp <- function(read_length, profile, error_rate) {
+    .Call(`_coverageSim_raw_read_model_cpp`, read_length, profile, error_rate)
+}
+
+raw_read_buffer_cpp <- function() {
+    .Call(`_coverageSim_raw_read_buffer_cpp`)
+}
+
+raw_release_buffer_cpp <- function(buffer) {
+    invisible(.Call(`_coverageSim_raw_release_buffer_cpp`, buffer))
+}
+
+raw_read_records_cpp <- function(model_ptr, buffer_ptr, id_prefix, id_width, first, n, pieces, polya, linker_arg, adapter_arg, references, inserts, reverse) {
+    .Call(`_coverageSim_raw_read_records_cpp`, model_ptr, buffer_ptr, id_prefix, id_width, first, n, pieces, polya, linker_arg, adapter_arg, references, inserts, reverse)
+}
+
+raw_shift_ends_cpp <- function(codes, offset, width, seq_idx, start, end, inner5, outer5, inner3, outer3, max_shift, min_length, copy_rank, shift_key) {
+    .Call(`_coverageSim_raw_shift_ends_cpp`, codes, offset, width, seq_idx, start, end, inner5, outer5, inner3, outer3, max_shift, min_length, copy_rank, shift_key)
+}
+
+raw_draw_fragments_cpp <- function(n, usable, width, lengths, source_cdf, length_cdf, pad) {
+    .Call(`_coverageSim_raw_draw_fragments_cpp`, n, usable, width, lengths, source_cdf, length_cdf, pad)
+}
+
+raw_permuted_indices_cpp <- function(first, size, total, key) {
+    .Call(`_coverageSim_raw_permuted_indices_cpp`, first, size, total, key)
 }
 
 feature_stop_positions <- function(bases, positions, stop_codons) {

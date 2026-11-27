@@ -1,1 +1,11 @@
 CXX_STD = CXX17
+PKG_LIBS = -lz -pthread
+ISAL_LIBS := $(shell pkg-config --libs libisal 2>/dev/null)
+LIBDEFLATE_LIBS := $(shell pkg-config --libs libdeflate 2>/dev/null)
+ifneq ($(ISAL_LIBS),)
+PKG_CPPFLAGS += -DCOVERAGESIM_ISAL $(shell pkg-config --cflags libisal 2>/dev/null)
+PKG_LIBS += $(ISAL_LIBS)
+else ifneq ($(LIBDEFLATE_LIBS),)
+PKG_CPPFLAGS += -DCOVERAGESIM_LIBDEFLATE $(shell pkg-config --cflags libdeflate 2>/dev/null)
+PKG_LIBS += $(LIBDEFLATE_LIBS)
+endif

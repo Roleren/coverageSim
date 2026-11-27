@@ -83,9 +83,12 @@ range, A filler) or "perfect" (Q40, no errors).}
 
 \item{chunk_size}{reads built in memory at a time.}
 
-\item{compress}{write gzip files (pigz when available).}
+\item{compress}{write gzip files. On Unix-like systems, the build uses ISA-L
+or libdeflate when detected by pkg-config, with zlib as the fallback.}
 
-\item{threads}{compression threads.}
+\item{threads}{number of compression workers. The decompressed FASTQ and
+truth files are identical across worker counts for the same seed and
+chunk size.}
 }
 \value{
 invisibly a list: \code{files}, \code{summary} (the one-row library
@@ -139,6 +142,11 @@ bases in read 1 and in its insert part),
 the read are 1-based and not cut to the read length:
 \code{adapter_start_read} is the first base after the 3' barcode and
 \code{insert_complete} says whether the whole insert is inside read 1.
+
+Footprints and read noise are generated in chunks. The same seed and chunk
+size reproduce the simulation within this implementation. Seeded reads and
+truth rows differ from earlier versions, which drew all footprints before
+assembly and used R's per-base random number stream.
 }
 \examples{
 set.seed(1)

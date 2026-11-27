@@ -280,7 +280,7 @@ raw_read_trim_settings <- function(protocol, adapter_length = 20L) {
 # ---------------------------------------------------------------------------
 # Sequence sources and fragment drawing
 
-raw_read_source <- function(sequences) {
+raw_read_source <- function(sequences, encoded = FALSE) {
   if (is.character(sequences) && length(sequences) == 1L && file.exists(sequences)) {
     sequences <- Biostrings::readDNAStringSet(sequences)
     names(sequences) <- sub("\\s.*$", "", names(sequences))
@@ -292,7 +292,10 @@ raw_read_source <- function(sequences) {
   }
   if (is.null(names(sequences))) names(sequences) <- paste0("seq", seq_along(sequences))
   width <- Biostrings::width(sequences)
-  list(big = unlist(sequences, use.names = FALSE), names = names(sequences),
+  big <- unlist(sequences, use.names = FALSE)
+  # Decode just the portion of a footprint needed by each FASTQ record.
+  if (encoded) big <- as.raw(big)
+  list(big = big, names = names(sequences),
        width = width, offset = cumsum(c(0, width[-length(width)])))
 }
 
@@ -323,27 +326,26 @@ raw_read_length_table <- function(insert_lengths, enzyme) {
 # Draw n footprints from a source: sequences weighted by length times a
 # log-normal abundance; `hotspots` restricts them to that many distinct
 # fragments with Zipf weights (rRNA / tRNA like).
-draw_raw_fragments <- function(source, n, lengths, expression_sd = 1.5, hotspots = NULL,
-                               pad = 3L) {
-  if (n == 0L) return(data.table::data.table(seq_idx = integer(), start = integer(), end = integer()))
+raw_fragment_sampler <- function(source, lengths, expression_sd, pad = 3L) {
   usable <- which(source$width >= max(lengths$length) + 2L * pad + 1L)
   if (length(usable) == 0L) {
     usable <- which(source$width >= min(lengths$length) + 2L * pad + 1L)
     if (length(usable) == 0L) stop("no sequence is long enough for the insert lengths")
   }
   weight <- source$width[usable] * stats::rlnorm(length(usable), 0, expression_sd)
-  distinct <- if (is.null(hotspots)) n else as.integer(hotspots)
-  pick <- function(x, size, prob) x[sample.int(length(x), size, replace = TRUE, prob = prob)]
-  seq_idx <- pick(usable, distinct, weight)
-  len <- pick(lengths$length, distinct, lengths$prob)
-  len <- pmin(len, source$width[seq_idx] - 2L * pad - 1L)
-  start <- pad + ceiling(stats::runif(distinct) * (source$width[seq_idx] - len - 2L * pad))
-  fragments <- data.table::data.table(seq_idx = seq_idx, start = as.integer(start),
-                                      end = as.integer(start + len - 1L))
-  if (!is.null(hotspots)) {
-    fragments <- fragments[sample.int(distinct, n, replace = TRUE, prob = 1 / seq_len(distinct))]
+  cdf <- function(weight) {
+    cumulative <- cumsum(weight)
+    if (!is.finite(tail(cumulative, 1L)) || tail(cumulative, 1L) <= 0) {
+      stop("footprint sampling weights must have a finite positive sum")
+    }
+    cumulative / tail(cumulative, 1L)
   }
-  fragments
+  source_cdf <- cdf(weight)
+  length_cdf <- cdf(lengths$prob)
+  source_width <- source$width
+  function(n) {
+    raw_draw_fragments_cpp(n, usable, source_width, lengths$length, source_cdf, length_cdf, pad)
+  }
 }
 
 raw_read_weight_vector <- function(profile) {
@@ -360,49 +362,22 @@ raw_read_weight_vector <- function(profile) {
 # end may move up to max_shift nt, with probability proportional to the weight
 # of the nucleotide just outside the read (cut site) times the weight of the
 # terminal nucleotide inside it.
-apply_raw_end_bias <- function(source, fragments, bias, max_shift = 2L, min_length = 12L) {
-  if (nrow(fragments) == 0L || max_shift < 1L) return(fragments)
-  lower <- source$offset[fragments$seq_idx] + 1
-  upper <- source$offset[fragments$seq_idx] + source$width[fragments$seq_idx]
-  n <- nrow(fragments)
-  shifts <- seq.int(-max_shift, max_shift)
-  code_at <- function(position) {
-    inside <- position >= lower & position <= upper
-    code <- rep(16L, n)
-    code[inside] <- as.integer(source$big[position[inside]])
-    code
+raw_end_bias_sampler <- function(source, bias, max_shift, fixed_shifts = FALSE, min_length = 12L) {
+  max_shift <- min(max_shift, max(source$width) - 1L)
+  if (max_shift < 1L) return(identity)
+  inner5 <- raw_read_weight_vector(bias$five_prime_bias)
+  outer5 <- raw_read_weight_vector(bias$five_prime_flank_bias)
+  inner3 <- raw_read_weight_vector(bias$three_prime_bias)
+  outer3 <- raw_read_weight_vector(bias$three_prime_flank_bias)
+  key <- if (fixed_shifts) sample.int(.Machine$integer.max, 2L, replace = TRUE)
+  function(fragments) {
+    shifted <- raw_shift_ends_cpp(source$big, source$offset, source$width, fragments$seq_idx,
+                                  fragments$start, fragments$end, inner5, outer5,
+                                  inner3, outer3, max_shift, min_length, fragments$copy_rank, key)
+    fragments$start <- shifted$start
+    fragments$end <- shifted$end
+    fragments
   }
-  choose_shift <- function(anchor, direction, inner_weights, outer_weights) {
-    reach <- seq.int(-max_shift - 1L, max_shift + 1L)
-    codes <- lapply(reach, function(step) code_at(anchor + step))
-    weight <- vapply(shifts, function(shift) {
-      inner <- anchor + shift
-      value <- inner_weights[codes[[match(shift, reach)]]] *
-        outer_weights[codes[[match(shift + direction, reach)]]]
-      value[inner < lower | inner > upper] <- 0
-      value
-    }, numeric(n))
-    dim(weight) <- c(n, length(shifts))
-    weight[, max_shift + 1L] <- pmax(weight[, max_shift + 1L], 1e-12)
-    cumulative <- weight
-    for (column in seq_along(shifts)[-1L]) {
-      cumulative[, column] <- cumulative[, column - 1L] + weight[, column]
-    }
-    threshold <- stats::runif(n) * cumulative[, length(shifts)]
-    shifts[1L + rowSums(cumulative < threshold)]
-  }
-  start <- lower + fragments$start - 1
-  end <- lower + fragments$end - 1
-  shift5 <- choose_shift(start, -1L, raw_read_weight_vector(bias$five_prime_bias),
-                         raw_read_weight_vector(bias$five_prime_flank_bias))
-  shift3 <- choose_shift(end, 1L, raw_read_weight_vector(bias$three_prime_bias),
-                         raw_read_weight_vector(bias$three_prime_flank_bias))
-  too_short <- (fragments$end + shift3) - (fragments$start + shift5) + 1L < min_length
-  shift5[too_short] <- 0L
-  shift3[too_short] <- 0L
-  fragments$start <- as.integer(fragments$start + shift5)
-  fragments$end <- as.integer(fragments$end + shift3)
-  fragments
 }
 
 raw_source_inserts <- function(source, fragments) {
@@ -432,27 +407,30 @@ raw_table_fragments <- function(fragments, source) {
       any(end > source$width[seq_idx])) {
     stop("fragments must lie inside their sequence with start <= end")
   }
-  result <- data.table::data.table(seq_idx = seq_idx, start = start, end = end)
-  if ("count" %in% names(fragments)) result <- result[rep(seq_len(nrow(result)), fragments$count)]
-  result
+  rows <- data.table::data.table(seq_idx = seq_idx, start = start, end = end)
+  list(n = nrow(rows), take = function(index) as.list(rows[index]), count = fragments$count)
 }
 
 # Footprints given as genomic ranges or alignments (for example a coverageSim
 # library read with ORFik::fimport()): the insert is the sequence of the range
 # on its strand, spliced reads are joined over their exons.
-raw_genomic_fragments <- function(fragments, sequences) {
-  spliced <- methods::is(fragments, "GAlignments")
-  blocks <- if (spliced) GenomicAlignments::grglist(fragments) else NULL
-  ranges <- if (spliced) GenomicRanges::granges(fragments) else fragments
-  seqname <- as.character(GenomicRanges::seqnames(ranges))
+raw_genomic_source <- function(fragments, sequences) {
+  seqname <- as.character(unique(GenomicRanges::seqnames(fragments)))
   if (is.character(sequences) && length(sequences) == 1L && file.exists(sequences)) {
     sequences <- Biostrings::readDNAStringSet(sequences)
     names(sequences) <- sub("\\s.*$", "", names(sequences))
   }
-  if (!all(unique(seqname) %in% names(sequences))) {
+  if (!all(seqname %in% names(sequences))) {
     stop("fragments has seqnames that are not in sequences")
   }
-  source <- raw_read_source(sequences[names(sequences) %in% unique(seqname)])
+  raw_read_source(sequences[names(sequences) %in% seqname])
+}
+
+raw_genomic_fragments <- function(fragments, source) {
+  spliced <- methods::is(fragments, "GAlignments")
+  blocks <- if (spliced) GenomicAlignments::grglist(fragments) else NULL
+  ranges <- if (spliced) GenomicRanges::granges(fragments) else fragments
+  seqname <- as.character(GenomicRanges::seqnames(ranges))
   piece <- function(x) {
     raw_source_inserts(source, data.table::data.table(
       seq_idx = match(as.character(GenomicRanges::seqnames(x)), source$names),
@@ -470,26 +448,66 @@ raw_genomic_fragments <- function(fragments, sequences) {
   strand <- as.character(GenomicRanges::strand(ranges))
   minus <- strand == "-"
   insert[minus] <- raw_reverse_complement(insert[minus])
-  result <- data.table::data.table(seqname = seqname, strand = strand,
-                                   insert_start = GenomicRanges::start(ranges),
-                                   insert_end = GenomicRanges::end(ranges), insert = insert)
-  score <- S4Vectors::mcols(fragments)$score
-  if (!is.null(score)) result <- result[rep(seq_len(nrow(result)), as.integer(score))]
-  result
+  data.table::data.table(seqname = seqname, strand = strand,
+                         insert_start = GenomicRanges::start(ranges),
+                         insert_end = GenomicRanges::end(ranges), insert = insert)
 }
 
-raw_fragment_table <- function(source, fragments, label) {
-  data.table::data.table(source = label, seqname = source$names[fragments$seq_idx],
-                         strand = "+", insert_start = fragments$start,
-                         insert_end = fragments$end,
-                         insert = raw_source_inserts(source, fragments))
+raw_fragment_table <- function(source, fragments, label, reference) {
+  list(source = label, seqname = source$names[fragments$seq_idx],
+       strand = "+", insert_start = fragments$start, insert_end = fragments$end,
+       insert = "", reference = reference,
+       offset = source$offset[fragments$seq_idx] + fragments$start - 1)
+}
+
+# Index copies with cumulative counts, avoiding a row per copy in memory.
+raw_supplied_sampler <- function(fragments, replace, keep_rank) {
+  count <- fragments$count
+  cumulative <- if (!is.null(count)) {
+    count <- trunc(as.numeric(count))
+    if (anyNA(count) || any(count < 0) || any(!is.finite(count))) {
+      stop("fragment counts must be finite and non-negative")
+    }
+    cumsum(count)
+  }
+  total <- if (is.null(cumulative)) fragments$n else sum(tail(cumulative, 1L))
+  if (total > .Machine$integer.max) stop("too many supplied footprint copies")
+  total <- as.integer(total)
+  key <- if (!replace && total > 1L) sample.int(.Machine$integer.max, 4L, replace = TRUE)
+  list(total = total, draw = function(n, first) {
+    if (total == 0L) stop("cannot sample from zero supplied footprints")
+    rank <- if (replace) sample.int(total, n, replace = TRUE) else if (total == 1L) 1L else {
+      raw_permuted_indices_cpp(first, n, total, key)
+    }
+    index <- if (is.null(cumulative)) rank else findInterval(rank - 1L, cumulative) + 1L
+    rows <- fragments$take(index)
+    if (keep_rank) rows$copy_rank <- rank
+    rows
+  })
+}
+
+# Hypergeometric chunk counts followed by a shuffle give a random order with
+# fixed library-wide source totals and no library-wide permutation.
+raw_chunk_counts <- function(remaining, n) {
+  if (length(remaining) == 1L) return(n)
+  if (sum(remaining) == n) return(remaining)
+  counts <- integer(length(remaining))
+  available <- sum(remaining)
+  for (i in seq_len(length(remaining) - 1L)) {
+    counts[i] <- stats::rhyper(1L, remaining[i], available - remaining[i], n)
+    available <- available - remaining[i]
+    n <- n - counts[i]
+  }
+  counts[length(counts)] <- n
+  counts
 }
 
 # ---------------------------------------------------------------------------
 # Read assembly, qualities, errors, writing
 
 raw_random_kmers <- function(n, k) {
-  if (k == 0L || n == 0L) return(character(n))
+  if (k == 0L) return("")
+  if (n == 0L) return(character())
   if (k > 6L) return(paste0(raw_random_kmers(n, 6L), raw_random_kmers(n, k - 6L)))
   kmers <- do.call(paste0, rev(expand.grid(rep(list(c("A", "C", "G", "T")), k),
                                            stringsAsFactors = FALSE)))
@@ -497,38 +515,29 @@ raw_random_kmers <- function(n, k) {
 }
 
 raw_pick_barcode <- function(n, barcodes, prob) {
-  if (length(barcodes) == 1L) return(rep(barcodes, n))
+  if (length(barcodes) == 1L) return(barcodes)
   barcodes[sample.int(length(barcodes), n, replace = TRUE, prob = prob)]
 }
 
 raw_added_five <- function(n, add5) {
-  if (is.null(add5)) return(character(n))
+  if (is.null(add5)) return("")
   lengths <- as.integer(names(add5$length_prob))
-  drawn <- if (length(lengths) == 1L) rep(lengths, n) else {
-    lengths[sample.int(length(lengths), n, replace = TRUE, prob = add5$length_prob)]
-  }
-  strrep(add5$base, drawn)
+  bases <- strrep(add5$base, lengths)
+  if (length(bases) == 1L) return(bases)
+  bases[sample.int(length(bases), n, replace = TRUE, prob = add5$length_prob)]
 }
 
 raw_added_three <- function(n, add3) {
-  if (is.null(add3)) return(character(n))
+  if (is.null(add3)) return("")
   bases <- names(add3$bases)
   drawn <- bases[sample.int(length(bases), n, replace = TRUE, prob = add3$bases)]
   drawn[stats::runif(n) >= add3$rate] <- ""
   drawn
 }
 
-raw_polya <- function(n, polya) {
-  if (is.null(polya)) return(character(n))
-  strrep("A", polya[1] + floor(stats::runif(n) * (polya[2] - polya[1] + 1)))
-}
-
-raw_open_fastq <- function(path, compress, threads) {
-  if (!compress) return(file(path, "wb"))
-  if (nzchar(Sys.which("pigz"))) {
-    return(pipe(paste("pigz -p", threads, "-c >", shQuote(path)), "wb"))
-  }
-  gzfile(path, "wb")
+raw_polya_lengths <- function(n, polya) {
+  if (is.null(polya)) return(0L)
+  as.integer(polya[1] + floor(stats::runif(n) * (polya[2] - polya[1] + 1)))
 }
 
 #' Simulate raw sequencing reads (FASTQ) from footprints
@@ -580,6 +589,11 @@ raw_open_fastq <- function(path, compress, threads) {
 #' \code{adapter_start_read} is the first base after the 3' barcode and
 #' \code{insert_complete} says whether the whole insert is inside read 1.
 #'
+#' Footprints and read noise are generated in chunks. The same seed and chunk
+#' size reproduce the simulation within this implementation. Seeded reads and
+#' truth rows differ from earlier versions, which drew all footprints before
+#' assembly and used R's per-base random number stream.
+#'
 #' @param sequences the sequences footprints come from: a \code{DNAStringSet},
 #'   a named character vector or a FASTA path.
 #' @param fragments NULL, a table or genomic ranges; see Details.
@@ -613,8 +627,11 @@ raw_open_fastq <- function(path, compress, threads) {
 #' @param library name used in the read ids, default the file name.
 #' @param seed random seed, or NULL to leave the random state alone.
 #' @param chunk_size reads built in memory at a time.
-#' @param compress write gzip files (pigz when available).
-#' @param threads compression threads.
+#' @param compress write gzip files. On Unix-like systems, the build uses ISA-L
+#'   or libdeflate when detected by pkg-config, with zlib as the fallback.
+#' @param threads number of compression workers. The decompressed FASTQ and
+#'   truth files are identical across worker counts for the same seed and
+#'   chunk size.
 #' @return invisibly a list: \code{files}, \code{summary} (the one-row library
 #'   table) and \code{trim} (\code{\link{raw_read_trim_settings}}).
 #' @export
@@ -658,124 +675,198 @@ simulate_raw_reads <- function(sequences, fragments = NULL, n_reads = NULL,
   other <- dimer_rate + sum(fractions)
   if (other >= 1) stop("dimer_rate and contaminant fractions must sum to less than 1")
   if (is.null(fragments) && is.null(n_reads)) stop("n_reads is needed when fragments is NULL")
+  if (!is.null(n_reads) && (!is.numeric(n_reads) || length(n_reads) != 1L ||
+      !is.finite(n_reads) || n_reads < 0 || n_reads > .Machine$integer.max)) {
+    stop("n_reads must be one finite non-negative read count")
+  }
   if (!is.null(seed)) set.seed(seed)
-  enzyme_label <- if (is.null(enzyme)) NA_character_ else enzyme
+  enzyme_label <- if (is.null(enzyme)) NA_character_ else as.character(enzyme)
+  protocol_label <- as.character(protocol$name)
+  organism <- as.character(organism)
+  if (length(organism) != 1L) stop("organism must be one source label")
+  if (length(protocol_label) != 1L) stop("protocol must have one name")
   bias <- method_end_bias(protocol$method, nuclease = enzyme)
   lengths <- raw_read_length_table(insert_lengths, if (is.null(enzyme)) "RNase I" else enzyme)
 
-  # Main footprints
+  chunk_size <- as.integer(chunk_size)
+  threads <- as.integer(threads)
+  if (length(chunk_size) != 1L || is.na(chunk_size) || chunk_size < 1L) {
+    stop("chunk_size must be one positive integer")
+  }
+  if (length(threads) != 1L || is.na(threads) || threads < 1L) {
+    stop("threads must be one positive integer")
+  }
+  end_shift <- as.integer(end_shift)
+  if (length(end_shift) != 1L || is.na(end_shift)) stop("end_shift must be one integer")
+  make_end_bias <- function(source, fixed_shifts = FALSE) {
+    raw_end_bias_sampler(source, bias, end_shift, fixed_shifts)
+  }
+  # Each source provides chunk-sized coordinates and materializes inserts on demand.
   genomic <- methods::is(fragments, "GRanges") || methods::is(fragments, "GAlignments")
   if (genomic) {
-    main <- cbind(source = organism, raw_genomic_fragments(fragments, sequences))
+    source <- if (length(fragments)) raw_genomic_source(fragments, sequences)
+    supplied <- list(n = length(fragments), count = S4Vectors::mcols(fragments)$score,
+                     take = function(index) raw_genomic_fragments(fragments[index], source))
   } else {
-    source <- raw_read_source(sequences)
-    if (is.null(fragments)) {
-      drawn <- draw_raw_fragments(source, round(n_reads * (1 - other)), lengths, expression_sd)
-    } else {
-      drawn <- raw_table_fragments(fragments, source)
-    }
-    if (isTRUE(end_bias)) drawn <- apply_raw_end_bias(source, drawn, bias, as.integer(end_shift))
-    main <- raw_fragment_table(source, drawn, organism)
-    rm(source)
+    source <- raw_read_source(sequences, encoded = TRUE)
+    supplied <- if (!is.null(fragments)) raw_table_fragments(fragments, source)
   }
-  if (!is.null(fragments) && !is.null(n_reads)) {
-    main <- main[sample.int(nrow(main), round(n_reads * (1 - other)), replace = TRUE)]
+  fixed_shifts <- !is.null(supplied) && !genomic && isTRUE(end_bias) && !is.null(n_reads)
+  main <- if (!is.null(supplied)) raw_supplied_sampler(supplied, !is.null(n_reads), fixed_shifts)
+  total <- if (is.null(n_reads)) round(main$total / (1 - other)) else as.integer(n_reads)
+  n_main <- if (is.null(n_reads)) main$total else round(n_reads * (1 - other))
+  take_main <- if (!is.null(main)) main$draw else if (n_main > 0L) {
+    draw_main <- raw_fragment_sampler(source, lengths, expression_sd)
+    function(n, first) draw_main(n)
   }
-  total <- if (is.null(n_reads)) round(nrow(main) / (1 - other)) else as.integer(n_reads)
+  samplers <- list(take_main)
+  shift_ends <- list(if (!genomic && n_main > 0L && isTRUE(end_bias)) {
+    make_end_bias(source, fixed_shifts)
+  } else identity)
+  materialize <- list(if (genomic) {
+    function(rows) cbind(source = organism, rows, reference = 0L, offset = 0)
+  } else {
+    function(rows) raw_fragment_table(source, rows, organism, 1L)
+  })
 
-  # Contaminants, second organism, dimers
-  parts <- list(main)
-  for (label in names(contaminants)) {
-    entry <- contaminants[[label]]
-    entry_source <- raw_read_source(entry$sequences)
+  n_dimer <- round(total * dimer_rate)
+  labels <- c(organism, names(contaminants), "adapter_dimer")
+  references <- vector("list", length(labels))
+  if (!genomic) references[[1L]] <- source$big
+  counts <- as.integer(c(n_main, round(total * fractions), n_dimer))
+  n <- sum(counts)
+  if (!n) stop("no reads to write")
+  if (n > .Machine$integer.max) stop("too many reads to write")
+  active <- which(counts > 0L)
+  for (i in seq_along(contaminants) + 1L) {
+    if (counts[i] == 0L) next
+    entry <- contaminants[[i - 1L]]
+    entry_source <- raw_read_source(entry$sequences, encoded = TRUE)
+    references[[i]] <- entry_source$big
     entry_lengths <- if (is.null(entry$insert_lengths)) lengths else {
       raw_read_length_table(entry$insert_lengths, "RNase I")
     }
-    drawn <- draw_raw_fragments(entry_source, round(total * entry$fraction), entry_lengths,
-                                expression_sd, hotspots = entry$hotspots)
+    sampler <- raw_fragment_sampler(entry_source, entry_lengths, expression_sd)
     if (is.null(entry$hotspots)) {
-      drawn <- apply_raw_end_bias(entry_source, drawn, bias, as.integer(end_shift))
+      samplers[[i]] <- local({
+        draw <- sampler
+        function(n, first) draw(n)
+      })
+      shift_ends[[i]] <- make_end_bias(entry_source)
+    } else {
+      samplers[[i]] <- local({
+        hotspots <- as.integer(entry$hotspots)
+        pool <- data.table::setDT(sampler(hotspots))
+        prob <- 1 / seq_len(hotspots)
+        function(n, first) as.list(pool[sample.int(hotspots, n, replace = TRUE, prob = prob)])
+      })
+      shift_ends[[i]] <- identity
     }
-    parts[[length(parts) + 1L]] <- raw_fragment_table(entry_source, drawn, label)
+    materialize[[i]] <- local({
+      src <- entry_source
+      label <- labels[i]
+      reference <- i
+      function(rows) raw_fragment_table(src, rows, label, reference)
+    })
   }
-  n_dimer <- round(total * dimer_rate)
-  if (n_dimer > 0L) {
-    parts[[length(parts) + 1L]] <- data.table::data.table(
-      source = rep("adapter_dimer", n_dimer), seqname = NA_character_, strand = NA_character_,
-      insert_start = NA_integer_, insert_end = NA_integer_, insert = "")
-  }
-  reads <- data.table::rbindlist(parts, use.names = TRUE)
-  rm(parts, main)
-  n <- nrow(reads)
-  if (n == 0L) stop("no reads to write")
-  reads <- reads[sample.int(n)]
+  dimer <- length(labels)
+  samplers[[dimer]] <- function(n, first) n
+  shift_ends[[dimer]] <- identity
+  materialize[[dimer]] <- function(n) list(
+    source = "adapter_dimer", seqname = NA_character_, strand = NA_character_,
+    insert_start = rep.int(NA_integer_, n), insert_end = NA_integer_,
+    insert = "", reference = 0L, offset = 0)
 
   # Output
+  separator <- getOption("datatable.fwrite.sep", ",")
+  if (length(separator) != 1L || is.na(separator) || nchar(separator, type = "bytes") != 1L) {
+    stop("the truth table separator must be one single-byte character")
+  }
+  logical01 <- isTRUE(getOption("datatable.logical01", FALSE))
+
+  if (length(library) != 1L) stop("library must be one name")
+  id_prefix <- paste0(library, ".")
+  id_width <- max(7L, nchar(n))
+
   dir.create(dirname(out_prefix), recursive = TRUE, showWarnings = FALSE)
   extension <- if (compress) ".fastq.gz" else ".fastq"
   fastq <- if (paired) paste0(out_prefix, c("_1", "_2"), extension) else paste0(out_prefix, extension)
   truth_file <- paste0(out_prefix, "_truth.csv", if (compress) ".gz" else "")
   summary_file <- paste0(out_prefix, "_summary.csv")
-  connections <- lapply(fastq, raw_open_fastq, compress = compress, threads = threads)
-  on.exit(for (connection in connections) try(close(connection), silent = TRUE), add = TRUE)
   if (file.exists(truth_file)) file.remove(truth_file)
-
-  filler <- strrep(if (quality == "novaseq") "G" else "A", read_length)
-  id_width <- max(7L, nchar(n))
+  writers <- list()
+  on.exit(for (writer in writers) try(raw_close_writer_cpp(writer), silent = TRUE), add = TRUE)
+  for (path in c(fastq, truth_file)) {
+    writers[[length(writers) + 1L]] <- raw_open_writer_cpp(path.expand(path), compress, threads)
+  }
+  truth_writer <- writers[[length(writers)]]
   profile <- match(quality, c("perfect", "novaseq", "hiseq")) - 1L
+  model <- raw_read_model_cpp(read_length, profile, error_rate)
+  buffer <- raw_read_buffer_cpp()
+  on.exit(raw_release_buffer_cpp(buffer), add = TRUE)
+  adapter <- substr(paste0(protocol$linker, protocol$adapter3), 1L, 20L)
   totals <- list(errors = 0, complete = 0, adapter_in_read = 0, insert_bases = 0)
-  for (first in seq.int(1L, n, by = chunk_size)) {
-    rows <- first:min(n, first + chunk_size - 1L)
-    size <- length(rows)
-    insert <- reads$insert[rows]
+  remaining <- counts[active]
+  composition_order <- character()
+  last <- 0L
+  while (last < n) {
+    first <- last + 1L
+    size <- min(chunk_size, n - last)
+    last <- last + size
+    take <- raw_chunk_counts(remaining, size)
+    part <- which(take > 0L)
+    groups <- active[part]
+    drawn <- lapply(part, function(i) samplers[[active[i]]](take[i], counts[active[i]] - remaining[i] + 1L))
+    shifted <- Map(function(draw, i) shift_ends[[i]](draw), drawn, groups)
+    parts <- Map(function(draw, i) materialize[[i]](draw), shifted, groups)
+    reads <- if (length(parts) == 1L) parts[[1L]] else {
+      data.table::rbindlist(lapply(parts, data.table::as.data.table), use.names = TRUE)[sample.int(size)]
+    }
+    if (length(composition_order) < length(active)) {
+      composition_order <- union(composition_order, unique(reads$source))
+    }
+    remaining <- remaining - take
+
     umi5 <- raw_random_kmers(size, protocol$umi5)
     barcode5 <- raw_pick_barcode(size, protocol$barcode5, protocol$barcode5_prob)
     add5 <- raw_added_five(size, protocol$add5)
     add3 <- raw_added_three(size, protocol$add3)
-    polya <- raw_polya(size, protocol$polya)
+    polya_len <- raw_polya_lengths(size, protocol$polya)
     umi3 <- raw_random_kmers(size, protocol$umi3)
     barcode3 <- raw_pick_barcode(size, protocol$barcode3, protocol$barcode3_prob)
-    five <- paste0(umi5, barcode5, add5)
-    construct <- paste0(five, insert, add3, polya, umi3, barcode3, protocol$linker)
-    insert_len <- nchar(insert)
-    insert_start_read <- nchar(five) + 1L
-    insert_end_read <- nchar(five) + insert_len
-    adapter_start_read <- nchar(construct) - nchar(protocol$linker) + 1L
-    ids <- sprintf("%s.%0*d", library, id_width, rows)
-
-    made <- raw_read_records_cpp(paste0(construct, protocol$adapter3, filler), ids,
-                                 read_length, profile, error_rate, insert_start_read,
-                                 insert_end_read)
-    writeBin(made$records, connections[[1]])
+    pieces <- list(umi5, barcode5, add5, add3, umi3, barcode3)
+    inserts <- list(reads$insert, reads$reference, reads$offset, reads$insert_start, reads$insert_end)
+    made <- raw_read_records_cpp(model, buffer, id_prefix, id_width, first, size, pieces, polya_len,
+                                 protocol$linker, protocol$adapter3, references, inserts, FALSE)
+    raw_write_fastq_cpp(writers[[1L]], buffer)
     if (paired) {
-      mate <- paste0(raw_reverse_complement(construct), protocol$adapter5, filler)
-      writeBin(raw_read_records_cpp(mate, ids, read_length, profile, error_rate,
-                                    insert_start_read, insert_end_read)$records,
-               connections[[2]])
+      raw_read_records_cpp(model, buffer, id_prefix, id_width, first, size, pieces, polya_len,
+                           protocol$linker, protocol$adapter5, references, inserts, TRUE)
+      raw_write_fastq_cpp(writers[[2L]], buffer)
     }
-    truth <- data.table::data.table(
-      read_id = ids, source = reads$source[rows], seqname = reads$seqname[rows],
-      strand = reads$strand[rows], insert_start = reads$insert_start[rows],
-      insert_end = reads$insert_end[rows], insert_len = insert_len,
+    truth <- list(
+      source = reads$source, seqname = reads$seqname,
+      strand = reads$strand, insert_start = reads$insert_start,
+      insert_end = reads$insert_end, insert_len = made$insert_len,
       umi5 = umi5, barcode5 = barcode5, add5 = add5, add3 = add3,
-      polya_len = nchar(polya), umi3 = umi3, barcode3 = barcode3,
-      insert_start_read = insert_start_read, insert_end_read = insert_end_read,
-      adapter_start_read = adapter_start_read,
-      insert_complete = insert_end_read <= read_length,
+      polya_len = polya_len, umi3 = umi3, barcode3 = barcode3,
+      insert_start_read = made$insert_start_read, insert_end_read = made$insert_end_read,
+      adapter_start_read = made$adapter_start_read,
+      insert_complete = made$insert_end_read <= read_length,
       n_errors = made$n_errors, n_errors_insert = made$n_errors_insert,
-      adapter = substr(paste0(protocol$linker, protocol$adapter3), 1L, 20L),
-      enzyme = enzyme_label, protocol = protocol$name)
-    data.table::fwrite(truth, truth_file, append = first > 1L, nThread = threads)
+      adapter = adapter,
+      enzyme = enzyme_label, protocol = protocol_label)
+    raw_write_truth_cpp(truth_writer, truth, id_prefix, id_width, first, size, separator, logical01)
     totals$errors <- totals$errors + made$errors
     totals$complete <- totals$complete + sum(truth$insert_complete)
-    totals$adapter_in_read <- totals$adapter_in_read + sum(adapter_start_read <= read_length)
-    totals$insert_bases <- totals$insert_bases + sum(insert_len)
+    totals$adapter_in_read <- totals$adapter_in_read + sum(made$adapter_start_read <= read_length)
+    totals$insert_bases <- totals$insert_bases + sum(made$insert_len)
   }
-  for (connection in connections) close(connection)
-  on.exit()
+  for (writer in writers) raw_close_writer_cpp(writer)
 
   trim <- raw_read_trim_settings(protocol)
-  composition <- reads[, list(reads = .N), by = source]
+  composition <- data.table::data.table(source = labels[active], reads = counts[active])[
+    , list(reads = sum(reads)), by = source][match(composition_order, source)]
   describe_add5 <- if (is.null(protocol$add5)) "" else {
     paste0(protocol$add5$base, ":", paste0(names(protocol$add5$length_prob), "=",
                                           signif(protocol$add5$length_prob / sum(protocol$add5$length_prob), 3),

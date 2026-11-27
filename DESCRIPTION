@@ -17,6 +17,7 @@ Depends:
   ORFik (>= 1.13.12),
   data.table
 LinkingTo: Rcpp
+SystemRequirements: GNU make, zlib, ISA-L or libdeflate (optional)
 Imports:
   Rcpp,
   AnnotationDbi,

@@ -45,20 +45,157 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// raw_read_records_cpp
-Rcpp::List raw_read_records_cpp(Rcpp::CharacterVector reads, Rcpp::CharacterVector ids, int read_length, int profile, double error_rate, Rcpp::IntegerVector insert_start, Rcpp::IntegerVector insert_end);
-RcppExport SEXP _coverageSim_raw_read_records_cpp(SEXP readsSEXP, SEXP idsSEXP, SEXP read_lengthSEXP, SEXP profileSEXP, SEXP error_rateSEXP, SEXP insert_startSEXP, SEXP insert_endSEXP) {
+// raw_open_writer_cpp
+SEXP raw_open_writer_cpp(Rcpp::CharacterVector path, bool gzip, int threads);
+RcppExport SEXP _coverageSim_raw_open_writer_cpp(SEXP pathSEXP, SEXP gzipSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type path(pathSEXP);
+    Rcpp::traits::input_parameter< bool >::type gzip(gzipSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_open_writer_cpp(path, gzip, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_write_fastq_cpp
+void raw_write_fastq_cpp(SEXP writer, SEXP buffer_ptr);
+RcppExport SEXP _coverageSim_raw_write_fastq_cpp(SEXP writerSEXP, SEXP buffer_ptrSEXP) {
+BEGIN_RCPP
+    Rcpp::traits::input_parameter< SEXP >::type writer(writerSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type buffer_ptr(buffer_ptrSEXP);
+    raw_write_fastq_cpp(writer, buffer_ptr);
+    return R_NilValue;
+END_RCPP
+}
+// raw_close_writer_cpp
+void raw_close_writer_cpp(SEXP writer);
+RcppExport SEXP _coverageSim_raw_close_writer_cpp(SEXP writerSEXP) {
+BEGIN_RCPP
+    Rcpp::traits::input_parameter< SEXP >::type writer(writerSEXP);
+    raw_close_writer_cpp(writer);
+    return R_NilValue;
+END_RCPP
+}
+// raw_write_truth_cpp
+void raw_write_truth_cpp(SEXP writer, Rcpp::List columns, std::string id_prefix, int id_width, int first, int n, std::string separator, bool logical01);
+RcppExport SEXP _coverageSim_raw_write_truth_cpp(SEXP writerSEXP, SEXP columnsSEXP, SEXP id_prefixSEXP, SEXP id_widthSEXP, SEXP firstSEXP, SEXP nSEXP, SEXP separatorSEXP, SEXP logical01SEXP) {
+BEGIN_RCPP
+    Rcpp::traits::input_parameter< SEXP >::type writer(writerSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type columns(columnsSEXP);
+    Rcpp::traits::input_parameter< std::string >::type id_prefix(id_prefixSEXP);
+    Rcpp::traits::input_parameter< int >::type id_width(id_widthSEXP);
+    Rcpp::traits::input_parameter< int >::type first(firstSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< std::string >::type separator(separatorSEXP);
+    Rcpp::traits::input_parameter< bool >::type logical01(logical01SEXP);
+    raw_write_truth_cpp(writer, columns, id_prefix, id_width, first, n, separator, logical01);
+    return R_NilValue;
+END_RCPP
+}
+// raw_read_model_cpp
+SEXP raw_read_model_cpp(int read_length, int profile, double error_rate);
+RcppExport SEXP _coverageSim_raw_read_model_cpp(SEXP read_lengthSEXP, SEXP profileSEXP, SEXP error_rateSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type reads(readsSEXP);
-    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type ids(idsSEXP);
     Rcpp::traits::input_parameter< int >::type read_length(read_lengthSEXP);
     Rcpp::traits::input_parameter< int >::type profile(profileSEXP);
     Rcpp::traits::input_parameter< double >::type error_rate(error_rateSEXP);
-    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type insert_start(insert_startSEXP);
-    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type insert_end(insert_endSEXP);
-    rcpp_result_gen = Rcpp::wrap(raw_read_records_cpp(reads, ids, read_length, profile, error_rate, insert_start, insert_end));
+    rcpp_result_gen = Rcpp::wrap(raw_read_model_cpp(read_length, profile, error_rate));
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_read_buffer_cpp
+SEXP raw_read_buffer_cpp();
+RcppExport SEXP _coverageSim_raw_read_buffer_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    rcpp_result_gen = Rcpp::wrap(raw_read_buffer_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_release_buffer_cpp
+void raw_release_buffer_cpp(SEXP buffer);
+RcppExport SEXP _coverageSim_raw_release_buffer_cpp(SEXP bufferSEXP) {
+BEGIN_RCPP
+    Rcpp::traits::input_parameter< SEXP >::type buffer(bufferSEXP);
+    raw_release_buffer_cpp(buffer);
+    return R_NilValue;
+END_RCPP
+}
+// raw_read_records_cpp
+Rcpp::List raw_read_records_cpp(SEXP model_ptr, SEXP buffer_ptr, std::string id_prefix, int id_width, int first, int n, Rcpp::List pieces, Rcpp::IntegerVector polya, Rcpp::CharacterVector linker_arg, Rcpp::CharacterVector adapter_arg, Rcpp::List references, Rcpp::List inserts, bool reverse);
+RcppExport SEXP _coverageSim_raw_read_records_cpp(SEXP model_ptrSEXP, SEXP buffer_ptrSEXP, SEXP id_prefixSEXP, SEXP id_widthSEXP, SEXP firstSEXP, SEXP nSEXP, SEXP piecesSEXP, SEXP polyaSEXP, SEXP linker_argSEXP, SEXP adapter_argSEXP, SEXP referencesSEXP, SEXP insertsSEXP, SEXP reverseSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type buffer_ptr(buffer_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type id_prefix(id_prefixSEXP);
+    Rcpp::traits::input_parameter< int >::type id_width(id_widthSEXP);
+    Rcpp::traits::input_parameter< int >::type first(firstSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type pieces(piecesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type polya(polyaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type linker_arg(linker_argSEXP);
+    Rcpp::traits::input_parameter< Rcpp::CharacterVector >::type adapter_arg(adapter_argSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type references(referencesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type inserts(insertsSEXP);
+    Rcpp::traits::input_parameter< bool >::type reverse(reverseSEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_read_records_cpp(model_ptr, buffer_ptr, id_prefix, id_width, first, n, pieces, polya, linker_arg, adapter_arg, references, inserts, reverse));
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_shift_ends_cpp
+Rcpp::List raw_shift_ends_cpp(Rcpp::RawVector codes, Rcpp::NumericVector offset, Rcpp::IntegerVector width, Rcpp::IntegerVector seq_idx, Rcpp::IntegerVector start, Rcpp::IntegerVector end, Rcpp::NumericVector inner5, Rcpp::NumericVector outer5, Rcpp::NumericVector inner3, Rcpp::NumericVector outer3, int max_shift, int min_length, Rcpp::Nullable<Rcpp::IntegerVector> copy_rank, Rcpp::Nullable<Rcpp::IntegerVector> shift_key);
+RcppExport SEXP _coverageSim_raw_shift_ends_cpp(SEXP codesSEXP, SEXP offsetSEXP, SEXP widthSEXP, SEXP seq_idxSEXP, SEXP startSEXP, SEXP endSEXP, SEXP inner5SEXP, SEXP outer5SEXP, SEXP inner3SEXP, SEXP outer3SEXP, SEXP max_shiftSEXP, SEXP min_lengthSEXP, SEXP copy_rankSEXP, SEXP shift_keySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::RawVector >::type codes(codesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type offset(offsetSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type width(widthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type seq_idx(seq_idxSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type start(startSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type end(endSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type inner5(inner5SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type outer5(outer5SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type inner3(inner3SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type outer3(outer3SEXP);
+    Rcpp::traits::input_parameter< int >::type max_shift(max_shiftSEXP);
+    Rcpp::traits::input_parameter< int >::type min_length(min_lengthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type copy_rank(copy_rankSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type shift_key(shift_keySEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_shift_ends_cpp(codes, offset, width, seq_idx, start, end, inner5, outer5, inner3, outer3, max_shift, min_length, copy_rank, shift_key));
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_draw_fragments_cpp
+Rcpp::List raw_draw_fragments_cpp(int n, Rcpp::IntegerVector usable, Rcpp::IntegerVector width, Rcpp::IntegerVector lengths, Rcpp::NumericVector source_cdf, Rcpp::NumericVector length_cdf, int pad);
+RcppExport SEXP _coverageSim_raw_draw_fragments_cpp(SEXP nSEXP, SEXP usableSEXP, SEXP widthSEXP, SEXP lengthsSEXP, SEXP source_cdfSEXP, SEXP length_cdfSEXP, SEXP padSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type usable(usableSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type width(widthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type lengths(lengthsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type source_cdf(source_cdfSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type length_cdf(length_cdfSEXP);
+    Rcpp::traits::input_parameter< int >::type pad(padSEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_draw_fragments_cpp(n, usable, width, lengths, source_cdf, length_cdf, pad));
+    return rcpp_result_gen;
+END_RCPP
+}
+// raw_permuted_indices_cpp
+Rcpp::IntegerVector raw_permuted_indices_cpp(int first, int size, int total, Rcpp::IntegerVector key);
+RcppExport SEXP _coverageSim_raw_permuted_indices_cpp(SEXP firstSEXP, SEXP sizeSEXP, SEXP totalSEXP, SEXP keySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< int >::type first(firstSEXP);
+    Rcpp::traits::input_parameter< int >::type size(sizeSEXP);
+    Rcpp::traits::input_parameter< int >::type total(totalSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type key(keySEXP);
+    rcpp_result_gen = Rcpp::wrap(raw_permuted_indices_cpp(first, size, total, key));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -79,7 +216,17 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_coverageSim_sample_uniform_regions_cpp", (DL_FUNC) &_coverageSim_sample_uniform_regions_cpp, 3},
     {"_coverageSim_write_feature_sequences_cpp", (DL_FUNC) &_coverageSim_write_feature_sequences_cpp, 12},
-    {"_coverageSim_raw_read_records_cpp", (DL_FUNC) &_coverageSim_raw_read_records_cpp, 7},
+    {"_coverageSim_raw_open_writer_cpp", (DL_FUNC) &_coverageSim_raw_open_writer_cpp, 3},
+    {"_coverageSim_raw_write_fastq_cpp", (DL_FUNC) &_coverageSim_raw_write_fastq_cpp, 2},
+    {"_coverageSim_raw_close_writer_cpp", (DL_FUNC) &_coverageSim_raw_close_writer_cpp, 1},
+    {"_coverageSim_raw_write_truth_cpp", (DL_FUNC) &_coverageSim_raw_write_truth_cpp, 8},
+    {"_coverageSim_raw_read_model_cpp", (DL_FUNC) &_coverageSim_raw_read_model_cpp, 3},
+    {"_coverageSim_raw_read_buffer_cpp", (DL_FUNC) &_coverageSim_raw_read_buffer_cpp, 0},
+    {"_coverageSim_raw_release_buffer_cpp", (DL_FUNC) &_coverageSim_raw_release_buffer_cpp, 1},
+    {"_coverageSim_raw_read_records_cpp", (DL_FUNC) &_coverageSim_raw_read_records_cpp, 13},
+    {"_coverageSim_raw_shift_ends_cpp", (DL_FUNC) &_coverageSim_raw_shift_ends_cpp, 14},
+    {"_coverageSim_raw_draw_fragments_cpp", (DL_FUNC) &_coverageSim_raw_draw_fragments_cpp, 7},
+    {"_coverageSim_raw_permuted_indices_cpp", (DL_FUNC) &_coverageSim_raw_permuted_indices_cpp, 4},
     {"_coverageSim_feature_stop_positions", (DL_FUNC) &_coverageSim_feature_stop_positions, 3},
     {NULL, NULL, 0}
 };

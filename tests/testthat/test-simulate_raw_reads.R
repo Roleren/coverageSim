@@ -278,3 +278,66 @@ test_that("a seed reproduces the library and fastp recovers the inserts", {
   clean <- truth$source == "main" & truth$n_errors == 0L
   expect_gt(mean(nchar(trimmed$sequence[clean]) == truth$insert_len[clean]), 0.97)
 })
+
+test_that("chunked paired FASTQ and truth contents reproduce across compression workers", {
+  transcripts <- raw_test_transcripts(4L)
+  fragments <- data.table::data.table(seqname = c("tx1", "tx2", "tx3"), start = c(21L, 77L, 91L),
+                                      end = c(48L, 109L, 118L), count = c(3001L, 0L, 3002L))
+  run <- function(workers) {
+    simulate_raw_reads(transcripts, fragments = fragments, read_length = 150L,
+                       protocol = "polya_cats", paired = TRUE, library = "seeded",
+                       out_prefix = tempfile(), seed = 17L, chunk_size = 4500L,
+                       dimer_rate = 0.05, threads = workers)
+  }
+  first <- run(1L)
+  second <- run(2L)
+  paths <- c("fastq1", "fastq2", "truth")
+  for (name in paths) {
+    expect_identical(readLines(first$files[[name]]), readLines(second$files[[name]]))
+  }
+  truth <- data.table::fread(first$files[["truth"]])
+  expect_identical(truth[source == "main", .N, keyby = seqname]$N, c(3001L, 3002L))
+  expect_identical(truth$read_id, raw_read_fastq(first$files[["fastq2"]])$read_id)
+})
+
+test_that("sampled copies of one supplied footprint retain their end shifts", {
+  result <- simulate_raw_reads(raw_test_transcripts(1L), fragments = data.frame(
+    seqname = "tx1", start = 20L, end = 48L), n_reads = 41L, end_bias = TRUE,
+    out_prefix = tempfile(), chunk_size = 13L, quality = "perfect", seed = 9L,
+    compress = FALSE)
+  truth <- data.table::fread(result$files[["truth"]])
+  expect_equal(nrow(unique(truth[, .(insert_start, insert_end)])), 1L)
+})
+
+test_that("raw reads retain single-worker throughput at one million reads", {
+  skip_on_cran()
+  transcripts <- raw_test_transcripts(256L)
+  elapsed <- system.time({
+    out <- simulate_raw_reads(transcripts, n_reads = 1000000L, read_length = 150L,
+                              protocol = "mcglincy2017", out_prefix = tempfile(),
+                              seed = 42L, threads = 1L)
+  })
+  on.exit(unlink(out$files))
+  expect_equal(out$summary$n_reads, 1000000L)
+  # CPU time excludes contention on shared CI runners. Leave room for zlib
+  # builds and slower machines while catching the previous implementation.
+  expect_lt(unname(sum(elapsed[c("user.self", "sys.self", "user.child", "sys.child")])), 8)
+})
+
+test_that("native truth output preserves CSV quoting and ambiguous DNA", {
+  dna <- Biostrings::DNAString("ACGTMRSVWYHKDBN-+.")
+  label <- 'tx,"quoted"'
+  fragments <- data.frame(seqname = label, start = 1L, end = length(dna))
+  out <- simulate_raw_reads(stats::setNames(as.character(dna), label), fragments = fragments,
+                            library = 'lib,"one"', organism = "a,b", paired = TRUE,
+                            out_prefix = tempfile(), quality = "perfect", compress = FALSE)
+  truth <- utils::read.csv(out$files[["truth"]], colClasses = "character")
+  expect_identical(truth$seqname, label)
+  expect_identical(truth$source, "a,b")
+  expect_identical(truth$umi5, "")
+  expect_identical(truth$read_id, 'lib,"one".0000001')
+  expect_identical(substr(raw_read_fastq(out$files[["fastq1"]])$sequence, 1L, length(dna)),
+                   as.character(dna))
+  expect_identical(substr(raw_read_fastq(out$files[["fastq2"]])$sequence, 1L, length(dna)),
+                   as.character(Biostrings::reverseComplement(dna)))
+})

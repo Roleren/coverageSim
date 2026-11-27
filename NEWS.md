@@ -9,6 +9,10 @@
   NEXTflex and TruSeq small RNA, TruSeq, SMARTer, OTTR, poly(A)/CATS, RiboLace)
   and custom layouts; `raw_read_trim_settings()` gives the trimming that undoes
   one. Example: analysis/workflows/simulate_raw_reads_example.R.
+* `simulate_raw_reads()` streams footprint sampling and writes FASTQ and truth
+  chunks from C++. Seeded files change relative to the former simulator.
+  Within this implementation, a fixed seed and chunk size reproduce the
+  decompressed files across compression worker counts.
 * `simulation_preset()` / `run_simulation_preset()`: clean / realistic / noisy
   difficulty presets, plus `codon_bias_preset("clean")` and `"noisy"`; validation
   in docs/PRESETS.md. `rdg_parameters(scan_coupling = 1)`: 0 decouples uORF
